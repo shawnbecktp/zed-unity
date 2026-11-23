@@ -396,5 +396,5 @@ cp target/${target_triple}/${target_dir}/zed "${app_path}/Contents/MacOS/zed"
 cp target/${target_triple}/${target_dir}/cli "${app_path}/Contents/MacOS/cli"
 sign_app_binaries
 
-sign_binary "target/$target_triple/release/remote-server"
-gzip -f --stdout --best target/$target_triple/release/remote-server > target/zed-remote-server-macos-$arch_suffix.gz
+sign_binary "target/$target_triple/$target_dir/remote-server"
+gzip -f --stdout --best "target/$target_triple/$target_dir/remote-server" > "target/zed-remote-server-macos-$arch_suffix.gz"
