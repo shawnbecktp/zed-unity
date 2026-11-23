@@ -413,6 +413,8 @@ actions!(
         Rename,
         /// Opens the selected file in the editor.
         Open,
+        /// Loads the selected C# solution in Roslyn.
+        LoadCSharpSolution,
         /// Opens the selected file in a permanent tab.
         OpenPermanent,
         /// Opens the selected file in a vertical split.
@@ -1164,6 +1166,8 @@ impl ProjectPanel {
             let is_markdown =
                 !is_dir && MarkdownPreviewView::is_markdown_path(file_name, project.languages());
             let is_svg = !is_dir && SvgPreviewView::is_svg_path(file_name);
+            let is_solution = !is_dir && is_csharp_solution(file_name);
+            let can_load_solution = project.is_local() && is_solution;
 
             let settings = ProjectPanelSettings::get_global(cx);
             let visible_worktrees_count = project.visible_worktrees(cx).count();
@@ -1213,6 +1217,9 @@ impl ProjectPanel {
                             })
                             .when(is_local, |menu| {
                                 menu.action("Open in Default App", Box::new(OpenWithSystem))
+                            })
+                            .when(can_load_solution, |menu| {
+                                menu.action("Load C# Solution", Box::new(LoadCSharpSolution))
                             })
                             .action("Open in Terminal", Box::new(OpenInTerminal))
                             .when(is_markdown, |menu| {
@@ -4203,6 +4210,47 @@ impl ProjectPanel {
             let abs_path = worktree.absolutize(&entry.path);
             cx.open_with_system(&abs_path);
         }
+    }
+
+    fn load_csharp_solution(
+        &mut self,
+        _: &LoadCSharpSolution,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((worktree, entry)) = self.selected_entry(cx) else {
+            return;
+        };
+        let path = worktree.absolutize(&entry.path);
+        if !entry.is_file() || !is_csharp_solution(&path) {
+            return;
+        }
+
+        let worktree_id = worktree.id();
+        let lsp_store = self.project.read(cx).lsp_store();
+        let result = lsp_store.update(cx, |store, _| {
+            store.load_csharp_solution(worktree_id, &path)
+        });
+        self.workspace
+            .update(cx, |workspace, cx| {
+                if let Some(notified) = result.notify_err(workspace, cx) {
+                    let message = if notified {
+                        "Solution sent to Roslyn"
+                    } else {
+                        "Solution selected. Open a C# file to start Roslyn."
+                    };
+                    workspace.show_toast(
+                        workspace::Toast::new(
+                            workspace::notifications::NotificationId::Named(
+                                "csharp-solution".into(),
+                            ),
+                            message,
+                        ),
+                        cx,
+                    );
+                }
+            })
+            .log_err();
     }
 
     fn open_in_terminal(
@@ -7535,6 +7583,14 @@ fn entry_file_name<'a>(entry: &'a Entry, root_name: &'a RelPath) -> &'a str {
         .unwrap_or_else(|| root_name.as_unix_str())
 }
 
+fn is_csharp_solution(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("sln") || extension.eq_ignore_ascii_case("slnx")
+        })
+}
+
 fn is_entry_shown(entry: &Entry, hide_gitignore: bool, hide_hidden: bool) -> bool {
     (!hide_gitignore || !entry.is_ignored) && (!hide_hidden || !entry.is_hidden)
 }
@@ -7741,6 +7797,7 @@ impl Render for ProjectPanel {
                     |el| {
                         el.on_action(cx.listener(Self::reveal_in_finder))
                             .on_action(cx.listener(Self::open_system))
+                            .on_action(cx.listener(Self::load_csharp_solution))
                             .on_action(cx.listener(Self::open_in_terminal))
                     },
                 )

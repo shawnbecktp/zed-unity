@@ -1,5 +1,6 @@
 use std::{
     borrow::Cow,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
@@ -27,6 +28,81 @@ use unindent::Unindent;
 use util::{path, rel_path::rel_path};
 
 use crate::init_test;
+
+#[gpui::test]
+async fn test_roslyn_starts_for_root_solutions_without_open_buffers(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/workspace"),
+        json!({
+            "classic": { "Classic.sln": "", "Game.cs": "" },
+            "xml": { "Xml.slnx": "" },
+            "unrelated": { "nested": { "Nested.sln": "" } }
+        }),
+    )
+    .await;
+    let project = Project::test(
+        fs,
+        [
+            path!("/workspace/classic").as_ref(),
+            path!("/workspace/xml").as_ref(),
+            path!("/workspace/unrelated").as_ref(),
+        ],
+        cx,
+    )
+    .await;
+    let languages = project.read_with(cx, |project, _| project.languages().clone());
+    languages.register_test_language(language::LanguageConfig {
+        name: "CSharp".into(),
+        matcher: Arc::new(language::LanguageMatcher {
+            path_suffixes: vec!["cs".into()],
+            ..Default::default()
+        }),
+        ..Default::default()
+    });
+    let _servers = languages.register_fake_lsp(
+        "CSharp",
+        FakeLspAdapter {
+            name: "roslyn",
+            ..Default::default()
+        },
+    );
+    cx.run_until_parked();
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let running_servers = |store: &LspStore, _: &gpui::App| {
+        store
+            .language_server_statuses()
+            .filter(|(_, status)| status.name == LanguageServerName::new_static("roslyn"))
+            .map(|(id, status)| (id, status.workspace_folders.clone()))
+            .collect::<BTreeMap<_, _>>()
+    };
+    let before_opening_file = lsp_store.read_with(cx, running_servers);
+    assert_eq!(before_opening_file.len(), 2);
+    assert_eq!(
+        before_opening_file
+            .values()
+            .flatten()
+            .cloned()
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([
+            Uri::from_file_path(path!("/workspace/classic")).unwrap(),
+            Uri::from_file_path(path!("/workspace/xml")).unwrap(),
+        ])
+    );
+
+    let (_buffer, _registration) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/workspace/classic/Game.cs"), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        lsp_store.read_with(cx, running_servers),
+        before_opening_file
+    );
+}
 
 #[gpui::test]
 async fn test_diagnostic_batches_skip_paths_without_worktrees(cx: &mut TestAppContext) {

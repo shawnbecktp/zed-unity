@@ -346,6 +346,39 @@ fn path_with_slashes(path: &str, path_style: PathStyle) -> String {
     }
 }
 
+const ROSLYN_SERVER: LanguageServerName = LanguageServerName::new_static("roslyn");
+
+fn is_root_csharp_solution(path: &RelPath) -> bool {
+    path.parent().is_some_and(RelPath::is_empty)
+        && path
+            .as_std_path()
+            .extension()
+            .and_then(OsStr::to_str)
+            .is_some_and(|extension| {
+                extension.eq_ignore_ascii_case("sln") || extension.eq_ignore_ascii_case("slnx")
+            })
+}
+
+fn has_root_csharp_solution(worktree: &Worktree) -> bool {
+    worktree.is_local()
+        && worktree.is_visible()
+        && worktree
+            .child_entries(RelPath::empty())
+            .any(|entry| entry.is_file() && is_root_csharp_solution(&entry.path))
+}
+
+struct OpenCSharpSolution;
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct OpenCSharpSolutionParams {
+    solution: Uri,
+}
+
+impl lsp::notification::Notification for OpenCSharpSolution {
+    type Params = OpenCSharpSolutionParams;
+    const METHOD: &'static str = "solution/open";
+}
+
 pub struct LocalLspStore {
     weak: WeakEntity<LspStore>,
     pub worktree_store: Entity<WorktreeStore>,
@@ -394,6 +427,7 @@ pub struct LocalLspStore {
         HashMap<Option<SharedString>, HashMap<PathBuf, Option<SharedString>>>,
     >,
     restricted_worktrees_tasks: HashMap<WorktreeId, (Subscription, watch::Receiver<bool>)>,
+    csharp_solutions: HashMap<WorktreeId, Uri>,
     auto_start_language_servers: bool,
     language_server_start_overrides: HashMap<LanguageServerName, bool>,
     language_server_restart_tasks: Vec<Task<()>>,
@@ -4103,6 +4137,7 @@ impl LocalLspStore {
         cx: &mut Context<LspStore>,
     ) -> Vec<LanguageServerId> {
         self.restricted_worktrees_tasks.remove(&id_to_remove);
+        self.csharp_solutions.remove(&id_to_remove);
         self.diagnostics.remove(&id_to_remove);
         self.prettier_store.update(cx, |prettier_store, cx| {
             prettier_store.remove_worktree(id_to_remove, cx);
@@ -5017,6 +5052,7 @@ impl LspStore {
                 buffer_pull_diagnostics_result_ids: HashMap::default(),
                 workspace_pull_diagnostics_result_ids: HashMap::default(),
                 restricted_worktrees_tasks: HashMap::default(),
+                csharp_solutions: HashMap::default(),
                 auto_start_language_servers: true,
                 language_server_start_overrides: HashMap::default(),
                 language_server_restart_tasks: Vec::new(),
@@ -5162,9 +5198,19 @@ impl LspStore {
                 if !worktree.read(cx).is_local() {
                     return;
                 }
+                if has_root_csharp_solution(worktree.read(cx)) {
+                    self.request_workspace_config_refresh();
+                }
                 cx.subscribe(worktree, |this, worktree, event, cx| match event {
                     worktree::Event::UpdatedEntries(changes) => {
                         this.update_local_worktree_language_servers(&worktree, changes, cx);
+                        if worktree.read(cx).is_visible()
+                            && changes
+                                .iter()
+                                .any(|(path, _, _)| is_root_csharp_solution(path))
+                        {
+                            this.request_workspace_config_refresh();
+                        }
                     }
                     worktree::Event::UpdatedGitRepositories(_)
                     | worktree::Event::DeletedEntry(_)
@@ -5500,6 +5546,7 @@ impl LspStore {
     ) -> Task<()> {
         let mut subscription = languages.subscribe();
         let mut prev_reload_count = languages.reload_count();
+        let mut roslyn_registered = languages.adapter_for_name(&ROSLYN_SERVER).is_some();
         cx.spawn(async move |this, cx| {
             while let Some(()) = subscription.next().await {
                 if let Some(this) = this.upgrade() {
@@ -5539,6 +5586,11 @@ impl LspStore {
                     }
 
                     this.update(cx, |this, cx| {
+                        let roslyn_available = languages.adapter_for_name(&ROSLYN_SERVER).is_some();
+                        if roslyn_available != roslyn_registered {
+                            roslyn_registered = roslyn_available;
+                            this.request_workspace_config_refresh();
+                        }
                         let mut buffers_to_detect = Vec::new();
                         let mut buffers_with_language = Vec::new();
                         let mut buffers_with_unknown_injections = Vec::new();
@@ -6472,6 +6524,52 @@ impl LspStore {
         let mut messages_to_report = Vec::new();
         let (new_tree, to_stop) = {
             let mut rebase = local.lsp_tree.rebase();
+            if local.languages.adapter_for_name(&ROSLYN_SERVER).is_some()
+                && let Some(csharp) = local.languages.available_language_for_name("CSharp")
+            {
+                let csharp = csharp.name();
+                let solution_worktrees = local
+                    .worktree_store
+                    .read(cx)
+                    .visible_worktrees(cx)
+                    .filter(|worktree| has_root_csharp_solution(worktree.read(cx)))
+                    .collect::<Vec<_>>();
+                for worktree in solution_worktrees {
+                    let worktree_id = worktree.read(cx).id();
+                    let root = ProjectPath {
+                        worktree_id,
+                        path: RelPath::empty().into(),
+                    };
+                    let delegate =
+                        Arc::new(ManifestQueryDelegate::new(worktree.read(cx).snapshot()));
+                    let roslyn = rebase
+                        .walk(root, csharp.clone(), None, delegate, cx)
+                        .find(|node| node.name().as_ref() == Some(&ROSLYN_SERVER));
+                    if let Some(roslyn) = roslyn {
+                        roslyn.server_id_or_init(|disposition| {
+                            let lsp_delegate = adapters
+                                .entry(worktree_id)
+                                .or_insert_with(|| get_adapter(worktree_id, cx))
+                                .clone()?;
+                            let server_id = local.get_or_insert_language_server(
+                                &worktree,
+                                lsp_delegate,
+                                disposition,
+                                &csharp,
+                                LanguageServerStartMode::Automatic,
+                                cx,
+                            )?;
+                            if let Some(state) = local.language_servers.get(&server_id)
+                                && let Some(folder) =
+                                    workspace_folder_uri(worktree.read(cx), RelPath::empty())
+                            {
+                                state.add_workspace_folder(folder);
+                            }
+                            Some(server_id)
+                        });
+                    }
+                }
+            }
             let buffers = buffer_store
                 .read(cx)
                 .buffers()
@@ -12089,6 +12187,29 @@ impl LspStore {
         self.as_local()?.language_server_for_id(id)
     }
 
+    pub fn load_csharp_solution(
+        &mut self,
+        worktree_id: WorktreeId,
+        solution_path: &Path,
+    ) -> Result<bool> {
+        let local = self
+            .as_local_mut()
+            .context("A local workspace is required.")?;
+        let solution = file_path_to_lsp_url(solution_path)?;
+        let mut notified = false;
+        for server in local
+            .language_servers_for_worktree(worktree_id)
+            .filter(|server| server.name() == ROSLYN_SERVER)
+        {
+            server.notify::<OpenCSharpSolution>(OpenCSharpSolutionParams {
+                solution: solution.clone(),
+            })?;
+            notified = true;
+        }
+        local.csharp_solutions.insert(worktree_id, solution);
+        Ok(notified)
+    }
+
     fn on_lsp_progress(
         &mut self,
         progress_params: lsp::ProgressParams,
@@ -13633,6 +13754,15 @@ impl LspStore {
         // indicating that the server is up and running and ready
         let workspace_folders = workspace_folders.lock().clone();
         language_server.set_workspace_folders(workspace_folders);
+        if adapter.name() == ROSLYN_SERVER
+            && let Some(solution) = local.csharp_solutions.get(&key.worktree_id)
+        {
+            language_server
+                .notify::<OpenCSharpSolution>(OpenCSharpSolutionParams {
+                    solution: solution.clone(),
+                })
+                .log_err();
+        }
         let server_capabilities = language_server.capabilities();
         local
             .initial_server_capabilities

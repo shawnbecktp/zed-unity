@@ -5,14 +5,14 @@ use fs::Fs;
 use gpui::{Action, App, IntoElement};
 use project::project_settings::ProjectSettings;
 use project::{AgentRegistryStore, RegistryAgent, agent_server_store::AllAgentServersSettings};
-use settings::{Settings, update_settings_file};
 use settings::{CustomAgentServerSettings, SettingsStore};
+use settings::{Settings, update_settings_file};
 use std::sync::Arc;
 use theme::{Appearance, SystemAppearance, ThemeRegistry};
 use theme_settings::{ThemeAppearanceMode, ThemeName, ThemeSelection, ThemeSettings};
 use ui::AgentSetupButton;
 use ui::{
-    Divider, StatefulInteractiveElement, SwitchField, TintColor, ToggleButtonGroup,
+    ButtonLink, Divider, StatefulInteractiveElement, SwitchField, TintColor, ToggleButtonGroup,
     ToggleButtonGroupSize, ToggleButtonSimple, Tooltip, prelude::*,
 };
 use vim_mode_setting::VimModeSetting;
@@ -584,7 +584,7 @@ fn render_unity_setup(cx: &App) -> impl IntoElement {
         )
     });
     let label = if installed {
-        "Installed"
+        "Extensions installed"
     } else if busy {
         "Installing…"
     } else {
@@ -597,6 +597,10 @@ fn render_unity_setup(cx: &App) -> impl IntoElement {
             Label::new("Find scene and prefab UnityEvent listeners from a C# method declaration.")
                 .color(Color::Muted),
         )
+        .child(h_flex().child(ButtonLink::new(
+            "Get the .NET 10 SDK for C# navigation",
+            "https://dotnet.microsoft.com/download/dotnet/10.0",
+        )))
         .child(
             h_flex().child(
                 Button::new("install-unity", label)
