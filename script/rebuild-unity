@@ -18,7 +18,7 @@ export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
 command -v rustup >/dev/null || { echo "Install rustup to build Zed Unity." >&2; exit 1; }
 export RUSTUP_TOOLCHAIN
 RUSTUP_TOOLCHAIN=$(awk -F '"' '/^channel = / { print $2 }' rust-toolchain.toml)
-rustup show active-toolchain
+rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --target wasm32-wasip2 --no-self-update
 toolchain_bin=$(dirname "$(rustup which rustc)")
 export PATH="$toolchain_bin:$PATH"
 export RUSTC="$toolchain_bin/rustc"
