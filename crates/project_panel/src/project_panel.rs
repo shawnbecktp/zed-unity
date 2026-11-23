@@ -93,6 +93,72 @@ use crate::{
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
 
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum ProjectView {
+    Unity,
+    Solution,
+    #[default]
+    Files,
+}
+
+impl ProjectView {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Unity => "Unity",
+            Self::Solution => "Solution",
+            Self::Files => "Files",
+        }
+    }
+
+    fn includes(self, entry: &Entry, root_name: &RelPath) -> bool {
+        if entry.path.is_empty() || self == Self::Files {
+            return true;
+        }
+        match self {
+            Self::Unity => {
+                let is_unity_folder =
+                    |name| matches!(name, "Assets" | "Packages" | "ProjectSettings");
+                (entry.path.components().next().is_some_and(is_unity_folder)
+                    || root_name.file_name().is_some_and(is_unity_folder))
+                    && entry.path.extension() != Some("meta")
+            }
+            Self::Solution => {
+                !entry.path.components().any(|component| {
+                    matches!(
+                        component,
+                        ".git"
+                            | ".vs"
+                            | ".idea"
+                            | "Library"
+                            | "Temp"
+                            | "Logs"
+                            | "obj"
+                            | "Obj"
+                            | "bin"
+                            | "node_modules"
+                    )
+                }) && !entry.is_dir()
+                    && entry.path.extension().is_some_and(|extension| {
+                        matches!(
+                            extension,
+                            "cs" | "csproj"
+                                | "sln"
+                                | "slnx"
+                                | "props"
+                                | "targets"
+                                | "resx"
+                                | "razor"
+                                | "cshtml"
+                                | "asmdef"
+                                | "asmref"
+                        )
+                    })
+            }
+            Self::Files => true,
+        }
+    }
+}
+
 struct VisibleEntriesForWorktree {
     worktree_id: WorktreeId,
     entries: Vec<GitEntry>,
@@ -141,6 +207,7 @@ impl State {
 
 pub struct ProjectPanel {
     project: Entity<Project>,
+    project_view: ProjectView,
     fs: Arc<dyn Fs>,
     focus_handle: FocusHandle,
     scroll_handle: UniformListScrollHandle,
@@ -413,6 +480,8 @@ actions!(
         Rename,
         /// Opens the selected file in the editor.
         Open,
+        /// Expands and selects the opened file in the project panel.
+        SelectOpenedFile,
         /// Loads the selected C# solution in Roslyn.
         LoadCSharpSolution,
         /// Opens the selected file in a permanent tab.
@@ -520,6 +589,17 @@ pub fn init(cx: &mut App) {
         workspace.register_action(|workspace, _: &Toggle, window, cx| {
             if !workspace.toggle_panel_focus::<ProjectPanel>(window, cx) {
                 workspace.close_panel::<ProjectPanel>(window, cx);
+            }
+        });
+
+        workspace.register_action(|workspace, action: &SelectOpenedFile, window, cx| {
+            if let Some(panel) = workspace.panel::<ProjectPanel>(cx) {
+                let action = action.clone();
+                cx.defer_in(window, move |_, window, cx| {
+                    panel.update(cx, |panel, cx| {
+                        panel.select_opened_file(&action, window, cx)
+                    });
+                });
             }
         });
 
@@ -751,6 +831,7 @@ impl ProjectPanel {
                             this.reveal_entry(project.clone(), *entry_id, true, window, cx)
                                 .ok();
                         }
+                        cx.notify();
                     }
                     project::Event::ActiveEntryChanged(None) => {
                         let is_active_item_file_diff_view = this
@@ -764,6 +845,7 @@ impl ProjectPanel {
                         if !is_active_item_file_diff_view {
                             this.marked_entries.clear();
                         }
+                        cx.notify();
                     }
                     project::Event::RevealInProjectPanel(entry_id) => {
                         if let Some(()) = this
@@ -894,6 +976,7 @@ impl ProjectPanel {
             let weak_project_panel = cx.weak_entity();
             let mut this = Self {
                 project: project.clone(),
+                project_view: ProjectView::default(),
                 hover_scroll_task: None,
                 fs: workspace.app_state().fs.clone(),
                 focus_handle,
@@ -4688,12 +4771,33 @@ impl ProjectPanel {
             .collect();
         let hide_root = settings.hide_root && visible_worktrees.len() == 1;
         let hide_hidden = settings.hide_hidden;
+        let project_view = self.project_view;
 
         let visible_entries_task = cx.spawn_in(window, async move |this, cx| {
             let new_state = cx
                 .background_spawn(async move {
                     for (worktree_snapshot, is_local) in visible_worktrees {
                         let worktree_id = worktree_snapshot.id();
+                        let solution_paths: HashSet<Arc<RelPath>> = if project_view
+                            == ProjectView::Solution
+                        {
+                            worktree_snapshot
+                                .entries(true, 0)
+                                .filter(|entry| {
+                                    project_view.includes(entry, worktree_snapshot.root_name())
+                                })
+                                .flat_map(|entry| entry.path.ancestors().map(Arc::<RelPath>::from))
+                                .collect()
+                        } else {
+                            HashSet::default()
+                        };
+                        let included_in_view = |entry: &Entry| {
+                            if project_view == ProjectView::Solution {
+                                entry.path.is_empty() || solution_paths.contains(&entry.path)
+                            } else {
+                                project_view.includes(entry, worktree_snapshot.root_name())
+                            }
+                        };
 
                         let mut new_entry_parent_id = None;
                         let mut new_entry_kind = EntryKind::Dir;
@@ -4715,6 +4819,11 @@ impl ProjectPanel {
                         let mut auto_folded_ancestors = vec![];
                         let worktree_abs_path = worktree_snapshot.abs_path();
                         while let Some(entry) = entry_iter.entry() {
+                            if !included_in_view(&entry) {
+                                auto_folded_ancestors.clear();
+                                entry_iter.advance_to_sibling();
+                                continue;
+                            }
                             if hide_root && Some(entry.entry) == worktree_snapshot.root_entry() {
                                 if new_entry_parent_id == Some(entry.id) {
                                     visible_worktree_entries.push(Self::create_new_git_entry(
@@ -4738,6 +4847,7 @@ impl ProjectPanel {
                                         && entry.path != root_path.path
                                         && child_entries.next().is_none()
                                         && child.kind.is_dir()
+                                        && included_in_view(child)
                                     {
                                         entry_iter.advance();
 
@@ -4804,6 +4914,7 @@ impl ProjectPanel {
                                     && !precedes_new_entry
                                     && !worktree_snapshot.child_entries(&entry.path).any(|child| {
                                         is_entry_shown(child, hide_gitignore, hide_hidden)
+                                            && included_in_view(child)
                                     })
                                 {
                                     new_state.empty_dir_ids.insert(entry.id);
@@ -5836,6 +5947,21 @@ impl ProjectPanel {
         predicate: &dyn Fn(GitEntryRef, WorktreeId) -> bool,
         cx: &mut Context<Self>,
     ) -> Option<SelectedEntry> {
+        let root_names: HashMap<_, _> = self
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .map(|worktree| {
+                let worktree = worktree.read(cx);
+                (worktree.id(), worktree.root_name().to_owned())
+            })
+            .collect();
+        let predicate = |entry: GitEntryRef, worktree_id| {
+            root_names
+                .get(&worktree_id)
+                .is_some_and(|root_name| self.project_view.includes(entry.entry, root_name))
+                && predicate(entry, worktree_id)
+        };
         let mut worktree_ids: Vec<_> = self
             .state
             .visible_entries
@@ -7316,6 +7442,103 @@ impl ProjectPanel {
         dispatch_context
     }
 
+    fn set_project_view(
+        &mut self,
+        project_view: ProjectView,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.project_view == project_view {
+            return;
+        }
+        self.discard_edit_state(window, cx);
+        self.project_view = project_view;
+        self.selection = None;
+        self.marked_entries.clear();
+        self.sticky_items_count = 0;
+        self.scroll_handle.scroll_to_item(0, ScrollStrategy::Top);
+        self.update_visible_entries(None, false, false, window, cx);
+        cx.notify();
+    }
+
+    fn select_opened_file(
+        &mut self,
+        _: &SelectOpenedFile,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(entry_id) = self.project.read(cx).active_entry() {
+            if self
+                .reveal_entry(self.project.clone(), entry_id, false, window, cx)
+                .log_err()
+                .is_some()
+            {
+                cx.emit(PanelEvent::Activate);
+                window.focus(&self.focus_handle, cx);
+            }
+        }
+    }
+
+    fn render_project_view_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let panel = cx.weak_entity();
+        let project_view = self.project_view;
+        h_flex()
+            .w_full()
+            .flex_none()
+            .justify_between()
+            .px_2()
+            .py_1()
+            .border_b_1()
+            .border_color(cx.theme().colors().border_variant)
+            .child(
+                ui::PopoverMenu::new("project-view-menu")
+                    .trigger_with_tooltip(
+                        Button::new("project-view", project_view.label())
+                            .label_size(LabelSize::Small)
+                            .end_icon(Icon::new(IconName::ChevronDown).size(IconSize::XSmall)),
+                        Tooltip::text("Project View"),
+                    )
+                    .menu(move |window, cx| {
+                        let panel = panel.clone();
+                        Some(ContextMenu::build(window, cx, move |mut menu, _, _| {
+                            for view in [
+                                ProjectView::Unity,
+                                ProjectView::Solution,
+                                ProjectView::Files,
+                            ] {
+                                let panel = panel.clone();
+                                menu = menu.toggleable_entry(
+                                    view.label(),
+                                    view == project_view,
+                                    ui::IconPosition::End,
+                                    None,
+                                    move |window, cx| {
+                                        panel
+                                            .update(cx, |panel, cx| {
+                                                panel.set_project_view(view, window, cx)
+                                            })
+                                            .log_err();
+                                    },
+                                );
+                            }
+                            menu
+                        }))
+                    })
+                    .anchor(Anchor::TopLeft),
+            )
+            .child(
+                IconButton::new("select-opened-file", IconName::Crosshair)
+                    .disabled(self.project.read(cx).active_entry().is_none())
+                    .tooltip(Tooltip::for_action_title(
+                        "Select Opened File",
+                        &SelectOpenedFile,
+                    ))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.select_opened_file(&SelectOpenedFile, window, cx);
+                    })),
+            )
+    }
+
     fn reveal_entry(
         &mut self,
         project: Entity<Project>,
@@ -7330,6 +7553,15 @@ impl ProjectPanel {
             .context("can't reveal a non-existent entry in the project panel")?;
         let worktree = worktree.read(cx);
         let worktree_id = worktree.id();
+        if let Some(entry) = worktree.entry_for_id(entry_id)
+            && !self.project_view.includes(entry, worktree.root_name())
+        {
+            if skip_ignored {
+                return Ok(());
+            }
+            self.project_view = ProjectView::Files;
+            self.sticky_items_count = 0;
+        }
         let is_ignored = worktree
             .entry_for_id(entry_id)
             .is_none_or(|entry| entry.is_ignored && !entry.is_always_included);
@@ -7712,7 +7944,7 @@ impl Render for ProjectPanel {
                     }
                 }));
             }
-            h_flex()
+            let tree = h_flex()
                 .id("project-panel")
                 .group("project-panel")
                 .when(panel_settings.drag_and_drop, |this| {
@@ -7726,7 +7958,9 @@ impl Render for ProjectPanel {
                             this.clear_drag_state(cx);
                         }))
                 })
-                .size_full()
+                .w_full()
+                .flex_1()
+                .min_h_0()
                 .relative()
                 .on_modifiers_changed(cx.listener(
                     |this, event: &ModifiersChangedEvent, window, cx| {
@@ -7757,6 +7991,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::collapse_selected_entry_and_children))
                 .on_action(cx.listener(Self::expand_selected_entry_and_children))
                 .on_action(cx.listener(Self::open))
+                .on_action(cx.listener(Self::select_opened_file))
                 .on_action(cx.listener(Self::open_permanent))
                 .on_action(cx.listener(Self::open_split_vertical))
                 .on_action(cx.listener(Self::open_split_horizontal))
@@ -8224,7 +8459,13 @@ impl Render for ProjectPanel {
                             .child(context_menu.menu.clone()),
                     )
                     .with_priority(3)
-                }))
+                }));
+
+            v_flex()
+                .id("project-panel-wrapper")
+                .size_full()
+                .child(self.render_project_view_selector(cx))
+                .child(tree)
         } else {
             let focus_handle = self.focus_handle(cx);
             let workspace = self.workspace.clone();

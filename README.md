@@ -7,6 +7,8 @@ This fork includes UnityEvent reference navigation and keeps the Agent panel for
 
 Press **Shift** twice to open **Search Everywhere**. Start typing to find files, symbols, editor actions, and text in your project. Use **Tab** or **Shift+Tab** to switch categories, **Enter** to open a result, and **Esc** to return. Alternate keymaps are available under **Base Keymap** in Settings.
 
+Use the selector above the project tree to switch views. **Unity** shows `Assets`, `Packages`, and `ProjectSettings` without `.meta` files. **Solution** filters the tree to .NET source, solution, project, and assembly definition files, excluding generated caches. **Files** shows the regular file tree. Click the crosshair button, **Select Opened File**, to expand and highlight the active file. It switches to Files when the selected view excludes that file. The same command is available in the command palette as **project panel: select opened file**.
+
 Open a Unity project and use **editor: find all references** on a method declaration to find directly serialized UnityEvent listeners in scenes and prefabs. This first version supports text assets under `Assets` and local component targets. Inherited callbacks, overloads and prefab instance overrides are outside its scope.
 
 For a development build, place the archive beside the editor binary before launch, for example `script/package-unity-extension osx-arm64 target/debug/unity-event-references.tar.gz`. Use the .NET runtime identifier matching the editor's target architecture.

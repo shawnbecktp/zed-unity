@@ -31,6 +31,193 @@ use workspace::{
 };
 
 #[gpui::test]
+async fn test_project_views(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let (panel, mut cx) = open_panel_with_tree(
+        json!({
+            "Assets": {
+                "Scripts": {"Player.cs": "", "Player.cs.meta": ""},
+                "Art": {"texture.png": ""},
+                "Scripts.meta": ""
+            },
+            "Packages": {"manifest.json": ""},
+            "ProjectSettings": {"ProjectVersion.txt": ""},
+            "Library": {"Generated.cs": ""},
+            "Tools": {"Utility.cs": "", "obj": {"Generated.cs": ""}},
+            "Notes": {"readme.txt": ""},
+            "Game.csproj": "",
+            "Game.slnx": ""
+        }),
+        size(px(300.), px(600.)),
+        cx,
+    )
+    .await;
+    let cx = &mut cx;
+
+    let visible_paths = |cx: &VisualTestContext| {
+        panel.read_with(cx, |panel, _| {
+            panel
+                .state
+                .visible_entries
+                .iter()
+                .flat_map(|worktree| worktree.entries.iter())
+                .map(|entry| entry.path.as_unix_str().to_owned())
+                .collect::<BTreeSet<_>>()
+        })
+    };
+    panel.update_in(cx, |panel, window, cx| {
+        panel.set_project_view(ProjectView::Unity, window, cx);
+        panel.expand_all_entries(&ExpandAllEntries, window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        visible_paths(cx),
+        [
+            "",
+            "Assets",
+            "Assets/Art",
+            "Assets/Art/texture.png",
+            "Assets/Scripts",
+            "Assets/Scripts/Player.cs",
+            "Packages",
+            "Packages/manifest.json",
+            "ProjectSettings",
+            "ProjectSettings/ProjectVersion.txt",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>()
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.set_project_view(ProjectView::Solution, window, cx);
+        panel.expand_all_entries(&ExpandAllEntries, window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        visible_paths(cx),
+        [
+            "",
+            "Assets",
+            "Assets/Scripts",
+            "Assets/Scripts/Player.cs",
+            "Tools",
+            "Tools/Utility.cs",
+            "Game.csproj",
+            "Game.slnx",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>()
+    );
+
+    panel.update(cx, |panel, cx| {
+        assert!(
+            panel
+                .find_entry(
+                    None,
+                    false,
+                    &|entry, _| entry.path.as_ref() == rel_path("Library/Generated.cs"),
+                    cx,
+                )
+                .is_none()
+        );
+    });
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.set_project_view(ProjectView::Files, window, cx);
+    });
+    cx.run_until_parked();
+    let paths = visible_paths(cx);
+    assert!(paths.contains("Assets/Scripts/Player.cs.meta"));
+    assert!(paths.contains("Library/Generated.cs"));
+    assert!(paths.contains("Tools/obj/Generated.cs"));
+    assert!(paths.contains("Notes/readme.txt"));
+}
+
+#[gpui::test]
+async fn test_select_opened_file_in_project_views(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .auto_reveal_entries = Some(false);
+            });
+        });
+    });
+    let (panel, mut cx) = open_panel_with_tree(
+        json!({
+            "Assets": {
+                "Scripts": {"Player.cs": ""},
+                "Art": {"texture.png": ""}
+            },
+            "Notes": {"readme.txt": ""}
+        }),
+        size(px(300.), px(600.)),
+        cx,
+    )
+    .await;
+    for (view, path, expected_view) in [
+        (
+            ProjectView::Unity,
+            "Assets/Scripts/Player.cs",
+            ProjectView::Unity,
+        ),
+        (
+            ProjectView::Solution,
+            "Assets/Scripts/Player.cs",
+            ProjectView::Solution,
+        ),
+        (
+            ProjectView::Solution,
+            "Assets/Art/texture.png",
+            ProjectView::Files,
+        ),
+        (ProjectView::Unity, "Notes/readme.txt", ProjectView::Files),
+    ] {
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.set_project_view(view, window, cx);
+            panel.collapse_all_entries(&CollapseAllEntries, window, cx);
+            let worktree_id = panel
+                .project
+                .read(cx)
+                .visible_worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .id();
+            panel.project.update(cx, |project, cx| {
+                project.set_active_path(
+                    Some(ProjectPath {
+                        worktree_id,
+                        path: rel_path(path).into(),
+                    }),
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.select_opened_file(&SelectOpenedFile, window, cx);
+        });
+        cx.run_until_parked();
+        panel.read_with(&cx, |panel, cx| {
+            assert!(panel.project_view == expected_view);
+            let selection = panel.selection.expect("opened file is selected");
+            assert!(panel.index_for_selection(selection).is_some());
+            assert_eq!(
+                panel.selected_entry(cx).unwrap().1.path.as_ref(),
+                rel_path(path)
+            );
+            assert_eq!(panel.marked_entries, vec![selection]);
+        });
+    }
+}
+
+#[gpui::test]
 async fn test_visible_list(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
