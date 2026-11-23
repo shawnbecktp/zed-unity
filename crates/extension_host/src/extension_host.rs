@@ -356,6 +356,11 @@ pub fn init(
     .detach();
 }
 
+enum ExtensionArchive {
+    Bundled(PathBuf),
+    Download(Url),
+}
+
 impl ExtensionStore {
     pub fn try_global(cx: &App) -> Option<Entity<Self>> {
         cx.try_global::<GlobalExtensionStore>()
@@ -858,10 +863,10 @@ impl ExtensionStore {
             .detach_and_log_err(cx);
     }
 
-    fn install_or_upgrade_extension_at_endpoint(
+    fn install_extension_archive(
         &mut self,
         extension_id: Arc<str>,
-        url: Url,
+        source: ExtensionArchive,
         operation: ExtensionOperation,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
@@ -886,29 +891,39 @@ impl ExtensionStore {
             });
 
             cx.background_spawn(async move {
-                let mut response = http_client
-                    .get(url.as_ref(), Default::default(), true)
-                    .await
-                    .context("downloading extension")?;
+                let tar_gz_bytes = match source {
+                    ExtensionArchive::Bundled(path) => fs
+                        .load_bytes(&path)
+                        .await
+                        .with_context(|| format!("reading {}", path.display()))?,
+                    ExtensionArchive::Download(url) => {
+                        let mut response = http_client
+                            .get(url.as_ref(), Default::default(), true)
+                            .await
+                            .context("downloading extension")?;
 
-                let content_length = response
-                    .headers()
-                    .get(http_client::http::header::CONTENT_LENGTH)
-                    .and_then(|value| value.to_str().ok()?.parse::<usize>().ok());
+                        let content_length = response
+                            .headers()
+                            .get(http_client::http::header::CONTENT_LENGTH)
+                            .and_then(|value| value.to_str().ok()?.parse::<usize>().ok());
 
-                let mut body = BufReader::new(response.body_mut());
-                let mut tar_gz_bytes = Vec::new();
-                body.read_to_end(&mut tar_gz_bytes).await?;
+                        let mut body = BufReader::new(response.body_mut());
+                        let mut tar_gz_bytes = Vec::new();
+                        body.read_to_end(&mut tar_gz_bytes).await?;
 
-                if let Some(content_length) = content_length {
-                    let actual_len = tar_gz_bytes.len();
-                    if content_length != actual_len {
-                        bail!(
-                            "downloaded extension size {actual_len} \
+                        if let Some(content_length) = content_length {
+                            let actual_len = tar_gz_bytes.len();
+                            if content_length != actual_len {
+                                bail!(
+                                    "downloaded extension size {actual_len} \
                         does not match content length {content_length}"
-                        );
+                                );
+                            }
+                        }
+
+                        tar_gz_bytes
                     }
-                }
+                };
 
                 let decompressed_bytes = GzipDecoder::new(BufReader::new(tar_gz_bytes.as_slice()));
                 let archive = Archive::new(decompressed_bytes);
@@ -972,6 +987,32 @@ impl ExtensionStore {
         })
     }
 
+    pub fn install_unity_extension(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let archive = std::env::current_exe().map(|exe| {
+            let filename = "unity-event-references.tar.gz";
+            if cfg!(target_os = "macos")
+                && exe
+                    .parent()
+                    .and_then(|p| p.file_name())
+                    .is_some_and(|name| name == "MacOS")
+            {
+                exe.with_file_name("..").join("Resources").join(filename)
+            } else {
+                exe.with_file_name(filename)
+            }
+        });
+        let path = match archive {
+            Ok(path) => path,
+            Err(error) => return Task::ready(Err(error.into())),
+        };
+        self.install_extension_archive(
+            "unity-event-references".into(),
+            ExtensionArchive::Bundled(path),
+            ExtensionOperation::Install,
+            cx,
+        )
+    }
+
     pub fn install_latest_extension(&mut self, extension_id: Arc<str>, cx: &mut Context<Self>) {
         log::info!("installing extension {extension_id} latest version");
 
@@ -997,9 +1038,9 @@ impl ExtensionStore {
             return;
         };
 
-        self.install_or_upgrade_extension_at_endpoint(
+        self.install_extension_archive(
             extension_id,
-            url,
+            ExtensionArchive::Download(url),
             ExtensionOperation::Install,
             cx,
         )
@@ -1034,7 +1075,7 @@ impl ExtensionStore {
             return Task::ready(Ok(()));
         };
 
-        self.install_or_upgrade_extension_at_endpoint(extension_id, url, operation, cx)
+        self.install_extension_archive(extension_id, ExtensionArchive::Download(url), operation, cx)
     }
 
     pub fn uninstall_extension(

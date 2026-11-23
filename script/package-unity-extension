@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# Arguments: .NET runtime identifier and output archive path.
+rid=${1:?expected .NET runtime identifier}
+archive=${2:?expected archive destination}
+dir="$(cd "$(dirname "$0")/../extensions/unity-event-references" && pwd)"
+stage="$(mktemp -d)"
+trap 'rm -rf "$stage"' EXIT
+mkdir -p "$(dirname "$archive")"
+cargo build --manifest-path "$dir/Cargo.toml" --target-dir "$dir/target" --target wasm32-wasip2 --release --locked
+dotnet publish "$dir/server" -c Release -r "$rid" --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o "$stage/server"
+cp "$dir/extension.toml" "$stage"
+cp "$dir/target/wasm32-wasip2/release/unity_event_references.wasm" "$stage/extension.wasm"
+binary=unity-event-lsp
+[[ "$rid" == win-* ]] && binary=unity-event-lsp.exe
+cp "$stage/server/$binary" "$stage/$binary"
+COPYFILE_DISABLE=1 tar -czf "$archive" -C "$stage" extension.toml extension.wasm "$binary"

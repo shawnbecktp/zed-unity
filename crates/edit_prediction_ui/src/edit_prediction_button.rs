@@ -1,6 +1,5 @@
 use anyhow::Result;
-use client::{Client, UserStore, zed_urls};
-use cloud_llm_client::UsageLimit;
+use client::UserStore;
 use copilot::Status;
 use edit_prediction::EditPredictionStore;
 use edit_prediction_types::EditPredictionDelegateHandle;
@@ -29,7 +28,7 @@ use settings::{
 use std::{ops::Range, rc::Rc, sync::Arc, time::Duration};
 use ui::{
     Clickable, ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconButtonShape,
-    Indicator, PopoverMenu, PopoverMenuHandle, ProgressBar, Tooltip, prelude::*,
+    Indicator, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 
@@ -1154,227 +1153,24 @@ impl EditPredictionButton {
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
         ContextMenu::build(window, cx, |mut menu, window, cx| {
-            let user = self.user_store.read(cx).current_user();
+            let mercury_payment_required = matches!(provider, EditPredictionProvider::Mercury)
+                && edit_prediction::EditPredictionStore::try_global(cx)
+                    .is_some_and(|ep_store| ep_store.read(cx).mercury_has_payment_required_error());
 
-            let needs_sign_in = user.is_none()
-                && matches!(
-                    provider,
-                    EditPredictionProvider::None | EditPredictionProvider::Zed
-                );
-
-            if needs_sign_in {
+            if mercury_payment_required {
                 menu = menu
-                    .custom_row(move |_window, cx| {
-                        let description = indoc! {
-                            "Suggestions at every keystroke, powered by Zeta, our open-source, \
-                            open-data model. Included with Zed Pro and the Pro trial."
-                        };
-
-                        v_flex()
-                            .max_w_64()
-                            .h(rems_from_px(148_f32))
-                            .child(render_zeta_tab_animation(cx))
-                            .child(Label::new("Edit Prediction"))
-                            .child(
-                                Label::new(description)
-                                    .color(Color::Muted)
-                                    .size(LabelSize::Small),
-                            )
-                            .into_any_element()
-                    })
-                    .separator()
-                    .entry("Sign In", None, |window, cx| {
-                        telemetry::event!(
-                            "Edit Prediction Menu Action",
-                            action = "sign_in",
-                            provider = "zed",
-                        );
-                        let client = Client::global(cx);
-                        window
-                            .spawn(cx, async move |cx| {
-                                client
-                                    .sign_in_with_optional_connect(true, &cx)
-                                    .await
-                                    .log_err();
-                            })
-                            .detach();
-                    })
-                    .link_with_handler(
-                        "Learn More",
-                        OpenBrowser {
-                            url: zed_urls::edit_prediction_docs(cx).into(),
-                        }
-                        .boxed_clone(),
-                        |_window, _cx| {
-                            telemetry::event!(
-                                "Edit Prediction Menu Action",
-                                action = "view_docs",
-                                source = "upsell",
-                            );
-                        },
+                    .header("Mercury")
+                    .item(ContextMenuEntry::new("Free tier limit reached").disabled(true))
+                    .item(
+                        ContextMenuEntry::new(
+                            "Upgrade to a paid plan to continue using the service",
+                        )
+                        .disabled(true),
                     )
                     .separator();
-            } else {
-                let mercury_payment_required = matches!(provider, EditPredictionProvider::Mercury)
-                    && edit_prediction::EditPredictionStore::try_global(cx).is_some_and(
-                        |ep_store| ep_store.read(cx).mercury_has_payment_required_error(),
-                    );
-
-                if mercury_payment_required {
-                    menu = menu
-                        .header("Mercury")
-                        .item(ContextMenuEntry::new("Free tier limit reached").disabled(true))
-                        .item(
-                            ContextMenuEntry::new(
-                                "Upgrade to a paid plan to continue using the service",
-                            )
-                            .disabled(true),
-                        )
-                        .separator();
-                }
-
-                let zed_cloud_has_no_active_subscription =
-                    matches!(provider, EditPredictionProvider::Zed)
-                        && self
-                            .user_store
-                            .read(cx)
-                            .current_organization_has_no_active_subscription();
-
-                if zed_cloud_has_no_active_subscription {
-                    menu = menu
-                        .header("Zed AI")
-                        .item(
-                            ContextMenuEntry::new(
-                                "This organization has no active subscription",
-                            )
-                            .disabled(true),
-                        )
-                        .item(
-                            ContextMenuEntry::new(
-                                "Switch organizations or configure another provider to use edit predictions",
-                            )
-                            .disabled(true),
-                        )
-                        .separator();
-                } else if edit_prediction::zed_edit_predictions_excluded_from_plan(
-                    self.user_store.read(cx),
-                    cx,
-                ) {
-                    menu = menu
-                        .custom_entry(
-                            |_window, _cx| {
-                                Label::new("Zed's edit predictions not included in the Free plan.")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted)
-                                    .into_any_element()
-                            },
-                            |_window, cx| cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx)),
-                        )
-                        .entry("Upgrade to Pro", None, |_window, cx| {
-                            telemetry::event!(
-                                "Edit Prediction Menu Action",
-                                action = "upsell_clicked",
-                                reason = "excluded_from_plan",
-                            );
-                            cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx))
-                        })
-                        .separator();
-                } else if let Some(usage) = self
-                    .edit_prediction_provider
-                    .as_ref()
-                    .and_then(|provider| provider.usage(cx))
-                {
-                    menu = menu.header("Usage");
-                    menu = menu
-                        .custom_entry(
-                            move |_window, cx| {
-                                let used_percentage = match usage.limit {
-                                    UsageLimit::Limited(limit) => {
-                                        Some((usage.amount as f32 / limit as f32) * 100.)
-                                    }
-                                    UsageLimit::Unlimited => None,
-                                };
-
-                                h_flex()
-                                    .flex_1()
-                                    .gap_1p5()
-                                    .children(used_percentage.map(|percent| {
-                                        ProgressBar::new("usage", percent, 100., cx)
-                                    }))
-                                    .child(
-                                        Label::new(match usage.limit {
-                                            UsageLimit::Limited(limit) => {
-                                                format!("{} / {limit}", usage.amount)
-                                            }
-                                            UsageLimit::Unlimited => {
-                                                format!("{} / ∞", usage.amount)
-                                            }
-                                        })
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted),
-                                    )
-                                    .into_any_element()
-                            },
-                            move |_, cx| cx.open_url(&zed_urls::account_url(cx)),
-                        )
-                        .when(usage.over_limit(), |menu| -> ContextMenu {
-                            menu.entry("Subscribe to increase your limit", None, |_window, cx| {
-                                telemetry::event!(
-                                    "Edit Prediction Menu Action",
-                                    action = "upsell_clicked",
-                                    reason = "usage_limit",
-                                );
-                                cx.open_url(&zed_urls::account_url(cx))
-                            })
-                        })
-                        .separator();
-                } else if self.user_store.read(cx).account_too_young() {
-                    menu = menu
-                        .custom_entry(
-                            |_window, _cx| {
-                                Label::new("Your GitHub account is less than 30 days old.")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Warning)
-                                    .into_any_element()
-                            },
-                            |_window, cx| cx.open_url(&zed_urls::account_url(cx)),
-                        )
-                        .entry("Upgrade to Zed Pro or contact us.", None, |_window, cx| {
-                            telemetry::event!(
-                                "Edit Prediction Menu Action",
-                                action = "upsell_clicked",
-                                reason = "account_age",
-                            );
-                            cx.open_url(&zed_urls::account_url(cx))
-                        })
-                        .separator();
-                } else if self.user_store.read(cx).has_overdue_invoices() {
-                    menu = menu
-                        .custom_entry(
-                            |_window, _cx| {
-                                Label::new("You have an outstanding invoice")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Warning)
-                                    .into_any_element()
-                            },
-                            |_window, cx| {
-                                cx.open_url(&zed_urls::account_url(cx))
-                            },
-                        )
-                        .entry(
-                            "Check your payment status or contact us at billing-support@zed.dev to continue using this feature.",
-                            None,
-                            |_window, cx| {
-                                cx.open_url(&zed_urls::account_url(cx))
-                            },
-                        )
-                        .separator();
-                }
             }
 
-            if !needs_sign_in {
-                menu = self.build_language_settings_menu(menu, window, cx);
-            }
+            menu = self.build_language_settings_menu(menu, window, cx);
             menu = self.add_provider_switching_section(menu, provider, cx);
 
             if cx.is_staff() {
@@ -1582,8 +1378,6 @@ pub fn set_completion_provider(fs: Arc<dyn Fs>, cx: &mut App, provider: EditPred
 
 pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
     let mut providers = Vec::new();
-
-    providers.push(EditPredictionProvider::Zed);
 
     let app_state = workspace::AppState::global(cx);
     if copilot::GlobalCopilotAuth::try_get_or_init(app_state, cx)

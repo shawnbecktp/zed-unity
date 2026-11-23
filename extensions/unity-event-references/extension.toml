@@ -1,0 +1,14 @@
+id = "unity-event-references"
+name = "UnityEvent References"
+description = "Find serialized UnityEvent listeners in scenes and prefabs from C#."
+version = "0.1.0"
+schema_version = 1
+authors = ["UnityEvent References contributors"]
+
+[language_servers.unity-event-references]
+name = "UnityEvent References"
+languages = ["CSharp"]
+
+[lib]
+kind = "Rust"
+version = "0.7.0"

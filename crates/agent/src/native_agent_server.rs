@@ -6,17 +6,14 @@ use fs::Fs;
 use gpui::{App, Entity, Task};
 use project::{AgentId, Project};
 
-use crate::{NativeAgent, NativeAgentConnection, ThreadStore, templates::Templates};
+use crate::ThreadStore;
 
 #[derive(Clone)]
-pub struct NativeAgentServer {
-    fs: Arc<dyn Fs>,
-    thread_store: Entity<ThreadStore>,
-}
+pub struct NativeAgentServer;
 
 impl NativeAgentServer {
-    pub fn new(fs: Arc<dyn Fs>, thread_store: Entity<ThreadStore>) -> Self {
-        Self { fs, thread_store }
+    pub fn new(_: Arc<dyn Fs>, _: Entity<ThreadStore>) -> Self {
+        Self
     }
 }
 
@@ -33,24 +30,11 @@ impl AgentServer for NativeAgentServer {
         &self,
         _delegate: AgentServerDelegate,
         _project: Entity<Project>,
-        cx: &mut App,
+        _cx: &mut App,
     ) -> Task<Result<Rc<dyn acp_thread::AgentConnection>>> {
-        log::debug!("NativeAgentServer::connect");
-        let fs = self.fs.clone();
-        let thread_store = self.thread_store.clone();
-        cx.spawn(async move |cx| {
-            log::debug!("Creating templates for native agent");
-            let templates = Templates::new();
-
-            log::debug!("Creating native agent entity");
-            let agent = cx.update(|cx| NativeAgent::new(thread_store, templates, fs, cx));
-
-            // Create the connection wrapper
-            let connection = NativeAgentConnection(agent);
-            log::debug!("NativeAgentServer connection established successfully");
-
-            Ok(Rc::new(connection) as Rc<dyn acp_thread::AgentConnection>)
-        })
+        Task::ready(Err(anyhow::anyhow!(
+            "The native Zed agent is unavailable in Zed Unity"
+        )))
     }
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {

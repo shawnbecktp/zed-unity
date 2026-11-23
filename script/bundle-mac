@@ -72,6 +72,7 @@ channel=$(<RELEASE_CHANNEL)
 export ZED_RELEASE_CHANNEL="${channel}"
 popd
 
+export ZED_UPDATE_EXPLANATION="Install new builds from shawnbecktp/zed-unity."
 export ZED_BUNDLE=true
 export CARGO_BUNDLE_SKIP_BUILD=true
 
@@ -129,6 +130,11 @@ app_path=$(cargo bundle ${build_flag} --target $target_triple --select-workspace
 mv Cargo.toml.backup Cargo.toml
 popd
 echo "Bundled ${app_path}"
+case "$arch_suffix" in
+    aarch64) unity_rid=osx-arm64 ;;
+    x86_64) unity_rid=osx-x64 ;;
+esac
+script/package-unity-extension "$unity_rid" "$app_path/Contents/Resources/unity-event-references.tar.gz"
 
 # DocumentTypes.plist references CFBundleTypeIconFile "Document", so the bundle must contain Document.icns.
 # We use the app icon as a placeholder document icon for now.

@@ -1,0 +1,4 @@
+/target/
+/server/bin/
+/server/obj/
+__pycache__/

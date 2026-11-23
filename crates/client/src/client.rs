@@ -869,6 +869,12 @@ impl Client {
             .is_some()
     }
 
+    #[cfg(not(any(test, feature = "test-support")))]
+    pub async fn sign_in(self: &Arc<Self>, _: bool, _: &AsyncApp) -> Result<Credentials> {
+        anyhow::bail!("Zed accounts are unavailable in Zed Unity")
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn sign_in(
         self: &Arc<Self>,
         try_provider: bool,

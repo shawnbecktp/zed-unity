@@ -1033,10 +1033,9 @@ impl settings::Settings for AllLanguageSettings {
         Self {
             edit_predictions: EditPredictionSettings {
                 button: edit_predictions.button.unwrap(),
-                provider: if let Some(provider) = edit_prediction_provider {
-                    provider
-                } else {
-                    EditPredictionProvider::None
+                provider: match edit_prediction_provider {
+                    Some(EditPredictionProvider::Zed) | None => EditPredictionProvider::None,
+                    Some(provider) => provider,
                 },
                 disabled_globs: disabled_globs
                     .iter()
