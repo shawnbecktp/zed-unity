@@ -5,6 +5,8 @@
 
 This fork includes UnityEvent reference navigation and keeps the Agent panel for external ACP agents, including Codex and Claude Code. Zed account sign-in and Zed’s native agent are disabled. Build the macOS app with `script/bundle-mac` using Zed's macOS build prerequisites, the .NET 8 SDK, and the Rust `wasm32-wasip2` target. Open **Zed Unity** and select **Install Unity support** during onboarding. You can return to setup through **zed: open onboarding**. The C# extension downloads from Zed's public registry. UnityEvent References and its runtime come from the app bundle.
 
+Press **Shift** twice to open **Search Everywhere**. Start typing to find files, symbols, editor actions, and text in your project. Use **Tab** or **Shift+Tab** to switch categories, **Enter** to open a result, and **Esc** to return. Alternate keymaps are available under **Base Keymap** in Settings.
+
 Open a Unity project and use **editor: find all references** on a method declaration to find directly serialized UnityEvent listeners in scenes and prefabs. This first version supports text assets under `Assets` and local component targets. Inherited callbacks, overloads and prefab instance overrides are outside its scope.
 
 For a development build, place the archive beside the editor binary before launch, for example `script/package-unity-extension osx-arm64 target/debug/unity-event-references.tar.gz`. Use the .NET runtime identifier matching the editor's target architecture.

@@ -5,7 +5,7 @@ use fs::Fs;
 use gpui::{Action, App, IntoElement};
 use project::project_settings::ProjectSettings;
 use project::{AgentRegistryStore, RegistryAgent, agent_server_store::AllAgentServersSettings};
-use settings::{BaseKeymap, Settings, update_settings_file};
+use settings::{Settings, update_settings_file};
 use settings::{CustomAgentServerSettings, SettingsStore};
 use std::sync::Arc;
 use theme::{Appearance, SystemAppearance, ThemeRegistry};
@@ -13,7 +13,7 @@ use theme_settings::{ThemeAppearanceMode, ThemeName, ThemeSelection, ThemeSettin
 use ui::AgentSetupButton;
 use ui::{
     Divider, StatefulInteractiveElement, SwitchField, TintColor, ToggleButtonGroup,
-    ToggleButtonGroupSize, ToggleButtonSimple, ToggleButtonWithIcon, Tooltip, prelude::*,
+    ToggleButtonGroupSize, ToggleButtonSimple, Tooltip, prelude::*,
 };
 use vim_mode_setting::VimModeSetting;
 
@@ -323,71 +323,6 @@ fn render_telemetry_section(tab_index: &mut isize, cx: &App) -> impl IntoElement
                 *tab_index
             }),
         )
-}
-
-fn render_base_keymap_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement {
-    let base_keymap = match BaseKeymap::get_global(cx) {
-        BaseKeymap::Zed => Some(0),
-        BaseKeymap::VSCode => Some(1),
-        BaseKeymap::JetBrains => Some(2),
-        BaseKeymap::SublimeText => Some(3),
-        BaseKeymap::Atom => Some(4),
-        BaseKeymap::Emacs => Some(5),
-        BaseKeymap::Cursor => Some(6),
-        BaseKeymap::TextMate => Some(7),
-        BaseKeymap::None => None,
-    };
-
-    return v_flex().gap_2().child(Label::new("Base Keymap")).child(
-        ToggleButtonGroup::two_rows(
-            "base_keymap_selection",
-            [
-                ToggleButtonWithIcon::new("Zed", IconName::AiZed, |_, _, cx| {
-                    write_keymap_base(BaseKeymap::Zed, cx);
-                }),
-                ToggleButtonWithIcon::new("VS Code", IconName::EditorVsCode, |_, _, cx| {
-                    write_keymap_base(BaseKeymap::VSCode, cx);
-                }),
-                ToggleButtonWithIcon::new("JetBrains", IconName::EditorJetBrains, |_, _, cx| {
-                    write_keymap_base(BaseKeymap::JetBrains, cx);
-                }),
-                ToggleButtonWithIcon::new("Sublime Text", IconName::EditorSublime, |_, _, cx| {
-                    write_keymap_base(BaseKeymap::SublimeText, cx);
-                }),
-            ],
-            [
-                ToggleButtonWithIcon::new("Atom", IconName::EditorAtom, |_, _, cx| {
-                    write_keymap_base(BaseKeymap::Atom, cx);
-                }),
-                ToggleButtonWithIcon::new("Emacs", IconName::EditorEmacs, |_, _, cx| {
-                    write_keymap_base(BaseKeymap::Emacs, cx);
-                }),
-                ToggleButtonWithIcon::new("Cursor", IconName::EditorCursor, |_, _, cx| {
-                    write_keymap_base(BaseKeymap::Cursor, cx);
-                }),
-                ToggleButtonWithIcon::new("TextMate", IconName::Keyboard, |_, _, cx| {
-                    write_keymap_base(BaseKeymap::TextMate, cx);
-                }),
-            ],
-        )
-        .when_some(base_keymap, |this, base_keymap| {
-            this.selected_index(base_keymap)
-        })
-        .full_width()
-        .tab_index(tab_index)
-        .size(ui::ToggleButtonGroupSize::Medium)
-        .style(ui::ToggleButtonGroupStyle::Outlined),
-    );
-
-    fn write_keymap_base(keymap_base: BaseKeymap, cx: &App) {
-        let fs = <dyn Fs>::global(cx);
-
-        update_settings_file(fs, cx, move |setting, _| {
-            setting.base_keymap = Some(keymap_base.into());
-        });
-
-        telemetry::event!("Welcome Keymap Changed", keymap = keymap_base);
-    }
 }
 
 fn render_vim_mode_switch(tab_index: &mut isize, cx: &mut App) -> impl IntoElement {
@@ -709,7 +644,6 @@ pub(crate) fn render_basics_page(cx: &mut App) -> impl IntoElement {
         .id("basics-page")
         .gap_6()
         .child(render_theme_section(&mut tab_index, cx))
-        .child(render_base_keymap_section(&mut tab_index, cx))
         .child(render_unity_setup(cx))
         .child(render_ai_section(cx))
         .child(render_import_settings_section(&mut tab_index, cx))

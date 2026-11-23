@@ -35,7 +35,7 @@ This opens the current directory in Zed.
 
 ## Set Up the JetBrains Keymap
 
-If you're coming from RustRover, the fastest way to feel at home is to use the JetBrains keymap. During onboarding, you can select it as your base keymap. If you missed that step, you can change it anytime:
+To use familiar RustRover shortcuts, enable the JetBrains keymap in Settings.
 
 1. Open Settings with `Cmd+,` (macOS) or `Ctrl+,` (Linux/Windows)
 2. Search for `Base Keymap`
@@ -87,14 +87,14 @@ You can also launch Zed from the terminal inside any existing Cargo project with
 Once inside a project:
 
 - Use `Cmd+Shift+O` or `Cmd+E` to jump between files quickly (like RustRover's "Recent Files")
-- Use `Cmd+Shift+A` or `Shift Shift` to open the Command Palette (like RustRover's "Search Everywhere")
+- Press `Shift Shift` to open Search Everywhere, or {#kb:jetbrains command_palette::Toggle} to open the Command Palette.
 - Use `Cmd+O` to search for symbols (like RustRover's "Go to Symbol")
 
 Open buffers appear as tabs across the top. The Project Panel shows your file tree and Git status. Toggle it with `Cmd+1` (just like RustRover's Project tool window).
 
 ## Differences in Keybindings
 
-If you chose the JetBrains keymap during onboarding, most of your shortcuts should already feel familiar. Here's a quick reference for how Zed compares to RustRover.
+If you enabled the JetBrains keymap in Settings, most of your shortcuts should already feel familiar. Here's a quick reference for how Zed compares to RustRover.
 
 ### Common Shared Keybindings
 
@@ -141,7 +141,7 @@ If you chose the JetBrains keymap during onboarding, most of your shortcuts shou
 
 ### How to Customize Keybindings
 
-- Open the Command Palette (`Cmd+Shift+A` or `Shift Shift`)
+- Open the Command Palette (`Cmd+Shift+A`)
 - Run {#action zed::OpenKeymap}
 
 This opens a list of all available bindings. You can override individual shortcuts or remove conflicts.

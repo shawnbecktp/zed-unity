@@ -7,6 +7,13 @@
 // keymaps, giving it the highest precedence of all the bindings set by us.
 [
   {
+    "context": "SearchEverywhere > Picker > Editor",
+    "bindings": {
+      "tab": "search::NextSearchCategory",
+      "shift-tab": "search::PreviousSearchCategory",
+    },
+  },
+  {
     "context": "Picker > Editor",
     "bindings": {
       "ctrl-shift-a": "picker::ToggleActionsMenu",

@@ -201,7 +201,7 @@ Open buffers appear as tabs across the top. The Project Panel shows your file tr
 
 ## Differences in Keybindings
 
-If you chose the VS Code keymap during onboarding, most shortcuts should already feel familiar.
+If you enabled the VS Code keymap in Settings, most shortcuts should already feel familiar.
 Here’s a quick reference for where keybindings match and where they differ.
 
 ### Common Shared Keybindings (Zed <> VS Code)

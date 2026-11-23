@@ -1263,7 +1263,7 @@ async fn stream_results_to_picker(
                 SearchResult::Buffer { buffer, ranges } => {
                     let remaining = cap.saturating_sub(total_matches + batch_matches.len());
                     let capped = ranges.len().min(remaining);
-                    let matches = Delegate::process_search_result(&buffer, &ranges[..capped], cx);
+                    let matches = SearchMatch::from_ranges(&buffer, &ranges[..capped], cx);
                     batch_matches.extend(matches);
                     if capped < ranges.len() {
                         limit_reached = true;
@@ -1356,7 +1356,7 @@ fn matched_line_window(
 
 /// Renders the matched source line with syntax highlighting, overlaying the
 /// search match with a highlighted background and bold weight.
-fn render_matched_line(search_match: &SearchMatch, cx: &App) -> StyledText {
+pub(crate) fn render_matched_line(search_match: &SearchMatch, cx: &App) -> StyledText {
     let settings = ThemeSettings::get_global(cx);
     let text_style = TextStyle {
         color: cx.theme().colors().text,
@@ -1378,15 +1378,11 @@ fn render_matched_line(search_match: &SearchMatch, cx: &App) -> StyledText {
 
     // Render a bounded window around the match, not the whole line,
     // so a minified single-line file stays cheap.
-    let line_start_abs = search_match
-        .range
-        .start
-        .saturating_sub(search_match.match_start_byte_column as usize);
-    let window = matched_line_window(
-        &snapshot,
-        &search_match.range,
-        search_match.match_start_byte_column,
-    );
+    let start: usize = snapshot.summary_for_anchor(&search_match.anchor_range.start);
+    let end: usize = snapshot.summary_for_anchor(&search_match.anchor_range.end);
+    let column = snapshot.offset_to_point(start).column;
+    let line_start_abs = start.saturating_sub(column as usize);
+    let window = matched_line_window(&snapshot, &(start..end), column);
     let window_text: String = snapshot.text_for_range(window.clone()).collect();
 
     // Trim leading indentation only when the window starts at the line start;
@@ -1424,14 +1420,8 @@ fn render_matched_line(search_match: &SearchMatch, cx: &App) -> StyledText {
 
     // The search match range, clamped to the visible area and made relative to
     // the start of the rendered text.
-    let match_start = search_match
-        .range
-        .start
-        .clamp(visible_start_abs, visible_end_abs);
-    let match_end = search_match
-        .range
-        .end
-        .clamp(visible_start_abs, visible_end_abs);
+    let match_start = start.clamp(visible_start_abs, visible_end_abs);
+    let match_end = end.clamp(visible_start_abs, visible_end_abs);
     let match_highlight = (
         match_start - visible_start_abs..match_end - visible_start_abs,
         search_match_style,
@@ -1474,9 +1464,10 @@ impl Delegate {
             )
             .log_err()
     }
+}
 
-    /// Create things from MB
-    pub(crate) fn process_search_result(
+impl SearchMatch {
+    pub(crate) fn from_ranges(
         buffer: &Entity<Buffer>,
         ranges: &[Range<Anchor>],
         cx: &AsyncApp,
@@ -1604,7 +1595,7 @@ mod tests {
         let async_cx = cx.to_async();
         let mut matches = Vec::new();
         while let Ok(SearchResult::Buffer { buffer, ranges }) = search.rx.recv().await {
-            matches.extend(Delegate::process_search_result(&buffer, &ranges, &async_cx));
+            matches.extend(SearchMatch::from_ranges(&buffer, &ranges, &async_cx));
         }
 
         assert_eq!(matches.len(), expected_matches);

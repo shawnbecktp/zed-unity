@@ -35,7 +35,7 @@ This opens the current directory in Zed.
 
 ## Set Up the JetBrains Keymap
 
-If you're coming from WebStorm, the fastest way to feel at home is to use the JetBrains keymap. During onboarding, you can select it as your base keymap. If you missed that step, you can change it anytime:
+To use familiar WebStorm shortcuts, enable the JetBrains keymap in Settings.
 
 1. Open Settings with {#kb zed::OpenSettings}
 2. Search for `Base Keymap`
@@ -75,20 +75,20 @@ You can also launch Zed from the terminal inside any folder with:
 Once inside a project:
 
 - Use {#kb:jetbrains file_finder::Toggle} to jump between files quickly (like WebStorm's "Recent Files")
-- Use {#kb:jetbrains command_palette::Toggle} to open the Command Palette (like WebStorm's "Search Everywhere")
+- Press `Shift Shift` to open Search Everywhere, or {#kb:jetbrains command_palette::Toggle} to open the Command Palette.
 - Use {#kb:jetbrains project_symbols::Toggle} to search for symbols (like WebStorm's "Go to Symbol")
 
 Open buffers appear as tabs across the top. The Project Panel shows your file tree and Git status. Toggle it with {#kb:jetbrains project_panel::ToggleFocus} (just like WebStorm's Project tool window).
 
 ## Differences in Keybindings
 
-If you chose the JetBrains keymap during onboarding, most of your shortcuts should already feel familiar. Here's a quick reference of common actions and their keybindings with the JetBrains keymap active.
+If you enabled the JetBrains keymap in Settings, most of your shortcuts should already feel familiar. Here's a quick reference of common actions and their keybindings with the JetBrains keymap active.
 
 ### Common Shared Keybindings
 
 | Action                        | Zed Keybinding                                                                                        |
 | ----------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Search Everywhere             | {#kb:jetbrains command_palette::Toggle}                                                               |
+| Search Everywhere             | `Shift Shift`                                                                                         |
 | Find Action / Command Palette | {#kb:jetbrains command_palette::Toggle}                                                               |
 | Go to File                    | {#kb:jetbrains file_finder::Toggle}                                                                   |
 | Go to Symbol                  | {#kb:jetbrains project_symbols::Toggle}                                                               |

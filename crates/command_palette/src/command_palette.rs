@@ -74,6 +74,19 @@ pub fn normalize_action_query(input: &str) -> String {
     result
 }
 
+/// Commands available at the current focus, with the same names and visibility as the palette.
+pub fn available_commands<'a>(
+    window: &Window,
+    cx: &'a App,
+) -> impl Iterator<Item = (SharedString, Box<dyn Action>)> + 'a {
+    let filter = CommandPaletteFilter::try_global(cx);
+    window
+        .available_actions(cx)
+        .into_iter()
+        .filter(move |action| !filter.is_some_and(|filter| filter.is_hidden(&**action)))
+        .map(|action| (humanize_action_name(action.name()).into(), action))
+}
+
 impl CommandPalette {
     fn register(
         workspace: &mut Workspace,
@@ -117,21 +130,11 @@ impl CommandPalette {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let filter = CommandPaletteFilter::try_global(cx);
-
-        let commands = window
-            .available_actions(cx)
-            .into_iter()
-            .filter_map(|action| {
-                if filter.is_some_and(|filter| filter.is_hidden(&*action)) {
-                    return None;
-                }
-
-                Some(Command {
-                    name: SharedString::from(humanize_action_name(action.name())),
-                    action,
-                    usage: None,
-                })
+        let commands = available_commands(window, cx)
+            .map(|(name, action)| Command {
+                name,
+                action,
+                usage: None,
             })
             .collect();
 
