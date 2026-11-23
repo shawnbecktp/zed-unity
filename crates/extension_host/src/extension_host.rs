@@ -165,6 +165,7 @@ pub struct ExtensionStore {
     pub reload_complete_senders: Vec<oneshot::Sender<()>>,
     pub installed_dir: PathBuf,
     pub staging_dir: PathBuf,
+    attempted_unity_upgrade: bool,
     pub outstanding_operations: BTreeMap<Arc<str>, ExtensionOperation>,
     pub index_path: PathBuf,
     pub modified_extensions: HashSet<Arc<str>>,
@@ -396,6 +397,7 @@ impl ExtensionStore {
             staging_dir,
             index_path,
             builder: Arc::new(ExtensionBuilder::new(builder_client, build_dir)),
+            attempted_unity_upgrade: false,
             outstanding_operations: Default::default(),
             modified_extensions: Default::default(),
             reload_complete_senders: Vec::new(),
@@ -751,12 +753,6 @@ impl ExtensionStore {
     pub fn auto_install_extensions(&mut self, cx: &mut Context<Self>) {
         if cfg!(test) {
             return;
-        }
-
-        if matches!(self.extension_status("unity-event-references"), ExtensionStatus::Installed(version) if version.as_ref() == "0.1.0")
-            && !self.is_dev_extension("unity-event-references")
-        {
-            self.install_unity_extension(cx).detach_and_log_err(cx);
         }
 
         let extension_settings = ExtensionSettings::get_global(cx);
@@ -1312,6 +1308,30 @@ impl ExtensionStore {
         mut new_index: ExtensionIndex,
         cx: &mut Context<Self>,
     ) -> Task<()> {
+        // Loading the old adapter first can shut down the new server when the reloads overlap.
+        let unity_id = "unity-event-references";
+        if new_index
+            .extensions
+            .get(unity_id)
+            .is_some_and(|entry| !entry.dev && entry.manifest.version.as_ref() == "0.1.0")
+            && (!self.attempted_unity_upgrade || self.outstanding_operations.contains_key(unity_id))
+        {
+            new_index.extensions.remove(unity_id);
+            if !self.attempted_unity_upgrade {
+                self.attempted_unity_upgrade = true;
+                let upgrade = self.install_unity_extension(cx);
+                cx.spawn(async move |store, cx| {
+                    if upgrade.await.log_err().is_none() {
+                        // Restore the installed adapter if the bundled archive is unavailable.
+                        if let Ok(reload) = store.update(cx, |store, cx| store.reload(None, cx)) {
+                            reload.await;
+                        }
+                    }
+                })
+                .detach();
+            }
+        }
+
         let old_index = &self.extension_index;
 
         let suppressed_extensions_to_remove = new_index
