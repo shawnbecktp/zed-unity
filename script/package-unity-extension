@@ -7,6 +7,11 @@ dir="$(cd "$(dirname "$0")/../extensions/unity-event-references" && pwd)"
 stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
 mkdir -p "$(dirname "$archive")"
+# rust-lld loads the host toolchain's LLVM when linking the WASI component.
+if [[ $(uname -s) == Darwin ]]; then
+    sysroot=$("${RUSTC:-rustc}" --print sysroot)
+    export DYLD_FALLBACK_LIBRARY_PATH="$sysroot/lib:${DYLD_FALLBACK_LIBRARY_PATH:-$HOME/lib:/usr/local/lib:/usr/lib}"
+fi
 cargo build --manifest-path "$dir/Cargo.toml" --target-dir "$dir/target" --target wasm32-wasip2 --release --locked
 dotnet publish "$dir/server" -c Release -r "$rid" --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o "$stage/server"
 cp "$dir/extension.toml" "$stage"
