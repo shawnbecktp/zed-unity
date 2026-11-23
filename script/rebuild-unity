@@ -3,16 +3,22 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 usage() {
-    echo "Usage: script/rebuild-unity [--windows]"
-    echo "Build and relaunch /Applications/Zed Unity.app. --windows also queues a Windows x64 build"
+    echo "Usage: script/rebuild-unity [--debug] [--windows]"
+    echo "Build and relaunch /Applications/Zed Unity.app in release mode (--debug for debug mode)."
+    echo "--windows also queues a Windows x64 build with the same profile"
     echo "of the current pushed commit on shawnbecktp/zed-unity using the authenticated gh CLI."
 }
-case "${1:-}" in
-    -h|--help) usage; exit 0 ;;
-    ''|--windows) ;;
-    *) usage >&2; exit 2 ;;
-esac
-[[ $# -le 1 && $(uname -s) == Darwin ]] || { usage >&2; exit 2; }
+profile=release
+build_windows=false
+for argument in "$@"; do
+    case "$argument" in
+        -h|--help) usage; exit 0 ;;
+        --debug) profile=debug ;;
+        --windows) build_windows=true ;;
+        *) usage >&2; exit 2 ;;
+    esac
+done
+[[ $(uname -s) == Darwin ]] || { usage >&2; exit 2; }
 # Use the repository toolchain for packaging helpers as well as the editor.
 export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
 export TERM="${TERM:-xterm-256color}"
@@ -24,19 +30,27 @@ rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --target wasm32-w
 toolchain_bin=$(dirname "$(rustup which rustc)")
 export PATH="$toolchain_bin:$PATH"
 export RUSTC="$toolchain_bin/rustc"
-if [[ ${1:-} == --windows ]]; then
+if [[ "$build_windows" == true ]]; then
     repo=shawnbecktp/zed-unity
     revision=$(git rev-parse HEAD)
     gh api "repos/$repo/commits/$revision" --silent
-    gh workflow run unity-windows.yml --repo "$repo" --ref main -f "revision=$revision"
+    gh workflow run unity-windows.yml --repo "$repo" --ref main -f "revision=$revision" -f "profile=$profile"
 fi
 
 triple=$(rustc -vV | awk '/^host:/ {print $2}')
 unset CARGO_TARGET_DIR
-script/bundle-mac -d "$triple"
+if [[ "$profile" == debug ]]; then
+    script/bundle-mac -d "$triple"
+else
+    script/bundle-mac "$triple"
+fi
 name='Zed Unity.app'
 identifier=com.shawnbecktp.zed-unity
-source_app="target/$triple/debug/bundle/osx/$name"
+if [[ "$profile" == debug ]]; then
+    source_app="target/$triple/debug/bundle/osx/$name"
+else
+    source_app="target/$triple/release/dmg/$name"
+fi
 destination="/Applications/$name"
 bundle_id() { /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$1/Contents/Info.plist"; }
 [[ $(bundle_id "$source_app") == "$identifier" ]]

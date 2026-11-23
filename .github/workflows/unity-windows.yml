@@ -6,12 +6,21 @@ on:
         description: Fork commit to build
         required: true
         type: string
+      profile:
+        description: Build profile
+        required: true
+        type: choice
+        default: release
+        options:
+          - release
+          - debug
 permissions:
   contents: read
 jobs:
   build:
     runs-on: windows-2022
     env:
+      BUILD_PROFILE: ${{ inputs.profile }}
       CARGO_INCREMENTAL: "0"
       CARGO_PROFILE_DEV_DEBUG: "0"
       ZED_UPDATE_EXPLANATION: Install new builds from shawnbecktp/zed-unity.
@@ -27,9 +36,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo build --locked --features util/debug-embed -p zed -p cli
+          build_flags=()
+          case "$BUILD_PROFILE" in
+            release) build_flags=(--release) ;;
+            debug) ;;
+            *) echo "Unsupported build profile: $BUILD_PROFILE" >&2; exit 2 ;;
+          esac
+          cargo build --locked "${build_flags[@]}" --features util/debug-embed -p zed -p cli
           mkdir -p dist
-          cp target/debug/{zed,cli}.exe dist/
+          cp "target/$BUILD_PROFILE/zed.exe" "target/$BUILD_PROFILE/cli.exe" dist/
           script/package-unity-extension win-x64 dist/unity-event-references.tar.gz
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
