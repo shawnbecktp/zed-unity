@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+usage() {
+    echo "Usage: script/rebuild-unity [--windows]"
+    echo "Build and relaunch /Applications/Zed Unity.app. --windows also queues a Windows x64 build"
+    echo "of the current pushed commit on shawnbecktp/zed-unity using the authenticated gh CLI."
+}
+case "${1:-}" in
+    -h|--help) usage; exit 0 ;;
+    ''|--windows) ;;
+    *) usage >&2; exit 2 ;;
+esac
+[[ $# -le 1 && $(uname -s) == Darwin ]] || { usage >&2; exit 2; }
+if [[ ${1:-} == --windows ]]; then
+    repo=shawnbecktp/zed-unity
+    revision=$(git rev-parse HEAD)
+    gh api "repos/$repo/commits/$revision" --silent
+    gh workflow run unity-windows.yml --repo "$repo" --ref main -f "revision=$revision"
+fi
+
+triple=$(rustc -vV | awk '/^host:/ {print $2}')
+export CARGO_TARGET_DIR="$PWD/target"
+script/bundle-mac -d "$triple"
+name='Zed Unity.app'
+identifier=com.shawnbecktp.zed-unity
+source_app="target/$triple/debug/bundle/osx/$name"
+destination="/Applications/$name"
+bundle_id() { /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$1/Contents/Info.plist"; }
+[[ $(bundle_id "$source_app") == "$identifier" ]]
+if [[ -e "$destination" || -L "$destination" ]]; then
+    [[ ! -L "$destination" && $(bundle_id "$destination") == "$identifier" ]] || {
+        echo "Unexpected bundle at $destination" >&2; exit 1;
+    }
+fi
+stage=$(mktemp -d '/Applications/.zed-unity.XXXXXXXX')
+cleanup() {
+    if [[ -e "$stage/previous.app" ]]; then
+        echo "Previous build retained at $stage/previous.app" >&2
+    else
+        rm -rf "$stage"
+    fi
+}
+trap cleanup EXIT
+ditto "$source_app" "$stage/$name"
+codesign --verify --deep --strict "$stage/$name"
+test -s "$stage/$name/Contents/Resources/unity-event-references.tar.gz"
+
+swift - "$identifier" <<'SWIFT'
+import AppKit
+let apps = NSRunningApplication.runningApplications(withBundleIdentifier: CommandLine.arguments[1])
+for app in apps { _ = app.terminate() }
+let deadline = Date().addingTimeInterval(60)
+while apps.contains(where: { !$0.isTerminated }) {
+    if Date() >= deadline {
+        fputs("Quit Zed Unity or finish its save prompt and retry.\n", stderr)
+        exit(1)
+    }
+    RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+}
+SWIFT
+if [[ -d "$destination" ]]; then mv "$destination" "$stage/previous.app"; fi
+if mv "$stage/$name" "$destination" && open "$destination"; then
+    rm -rf "$stage/previous.app"
+else
+    if [[ -d "$destination" ]]; then mv "$destination" "$stage/failed.app"; fi
+    if [[ -d "$stage/previous.app" ]]; then
+        mv "$stage/previous.app" "$destination"
+        open "$destination"
+    fi
+    exit 1
+fi
