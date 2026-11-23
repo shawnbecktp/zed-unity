@@ -568,8 +568,6 @@
     "context": "Editor",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-[": "editor::Outdent",
-      "cmd-]": "editor::Indent",
       "cmd-ctrl-p": ["editor::AddSelectionAbove", { "skip_soft_wrap": false }], // Insert cursor above
       "cmd-alt-up": ["editor::AddSelectionAbove", { "skip_soft_wrap": true }],
       "cmd-ctrl-n": ["editor::AddSelectionBelow", { "skip_soft_wrap": false }], // Insert cursor below
@@ -599,8 +597,8 @@
       "cmd-/": ["editor::ToggleComments", { "advance_downwards": false, "comment_empty_lines": true }],
       "cmd-k cmd-/": "editor::ToggleBlockComments",
       "shift-alt-a": "editor::ToggleBlockComments",
-      "f8": ["editor::GoToDiagnostic", { "severity": { "min": "hint", "max": "error" } }],
-      "shift-f8": ["editor::GoToPreviousDiagnostic", { "severity": { "min": "hint", "max": "error" } }],
+      "cmd-]": ["editor::GoToDiagnostic", { "severity": { "min": "hint", "max": "error" } }],
+      "cmd-[": ["editor::GoToPreviousDiagnostic", { "severity": { "min": "hint", "max": "error" } }],
       "cmd-r": "editor::Rename",
       "cmd-e": "editor::GoToDefinition",
       "alt-f12": "editor::GoToDefinitionSplit",
@@ -761,7 +759,7 @@
       "cmd-shift-m": "diagnostics::Deploy",
       "cmd-shift-e": "project_panel::ToggleFocus",
       "cmd-shift-b": "outline_panel::ToggleFocus",
-      "ctrl-shift-g": "git_panel::ToggleFocus",
+      "cmd-shift-g": "git_panel::ToggleFocus",
       "cmd-shift-d": "debug_panel::ToggleFocus",
       "cmd-?": "agent::ToggleFocus",
       "cmd-alt-s": "workspace::SaveAll",
