@@ -12,6 +12,10 @@ default-run = "zed"
 workspace = true
 
 [features]
+default = []
+collaboration = ["dep:call", "dep:channel", "dep:collab_ui", "title_bar/collaboration", "file_finder/collaboration", "git_ui/call", "gpui_platform/screen-capture"]
+notebooks = ["dep:repl"]
+dev-containers = ["dep:dev_container", "recent_projects/dev-containers"]
 tracy = ["ztracing/tracy"]
 # LEAK_BACKTRACE=1 cargo run --features zed/track-project-leak --profile release-fast
 track-project-leak = ["gpui/leak-detection"]
@@ -25,7 +29,7 @@ test-support = [
     "terminal_view/test-support",
     "image_viewer/test-support",
     "recent_projects/test-support",
-    "repl/test-support",
+    "repl?/test-support",
     "title_bar/test-support",
 ]
 visual-tests = [
@@ -81,18 +85,19 @@ audio.workspace = true
 auto_update.workspace = true
 auto_update_ui.workspace = true
 breadcrumbs.workspace = true
-call.workspace = true
+call = { workspace = true, optional = true }
 call_hierarchy.workspace = true
-channel.workspace = true
+channel = { workspace = true, optional = true }
 chrono.workspace = true
 clap.workspace = true
 cli.workspace = true
 client.workspace = true
 clock = { workspace = true, optional = true }
 codestral.workspace = true
-collab_ui.workspace = true
+collab_ui = { workspace = true, optional = true }
 collections.workspace = true
 command_palette.workspace = true
+command_palette_hooks.workspace = true
 component_preview.workspace = true
 copilot.workspace = true
 copilot_chat.workspace = true
@@ -103,7 +108,7 @@ db.workspace = true
 debug_adapter_extension.workspace = true
 debugger_tools.workspace = true
 debugger_ui.workspace = true
-dev_container.workspace = true
+dev_container = { workspace = true, optional = true }
 diagnostics.workspace = true
 editor.workspace = true
 encoding_selector.workspace = true
@@ -118,12 +123,11 @@ fs.workspace = true
 futures.workspace = true
 git.workspace = true
 git_hosting_providers.workspace = true
-git_ui = { workspace = true, features = ["call"] }
+git_ui.workspace = true
 git_ui_core.workspace = true
 go_to_line.workspace = true
 gpui = { workspace = true, features = ["profiler", "stacker"] }
 gpui_platform = { workspace = true, features = [
-    "screen-capture",
     "font-kit",
     "wayland",
     "x11",
@@ -184,7 +188,7 @@ proto.workspace = true
 recent_projects.workspace = true
 release_channel.workspace = true
 remote.workspace = true
-repl.workspace = true
+repl = { workspace = true, optional = true }
 reqwest = { workspace = true, features = ["multipart"] }
 reqwest_client.workspace = true
 rope.workspace = true

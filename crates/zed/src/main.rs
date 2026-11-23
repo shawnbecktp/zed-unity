@@ -5,11 +5,19 @@ mod reliability;
 mod watcher_debug;
 mod zed;
 
+#[cfg(feature = "collaboration")]
+use futures::future;
+#[cfg(feature = "collaboration")]
+use util::maybe;
+#[cfg(feature = "collaboration")]
+use workspace::notifications::NotifyResultExt;
+
 use agent_ui::AgentPanel;
 use anyhow::{Context as _, Result};
 use clap::Parser;
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{Client, ProxySettings, RefreshLlmTokenListener, UserStore, parse_zed_link};
+#[cfg(feature = "collaboration")]
 use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
 use crashes::InitCrashHandler;
@@ -20,7 +28,7 @@ use fs::{Fs, RealFs};
 use futures::{
     FutureExt, StreamExt,
     channel::{mpsc, oneshot},
-    future::{self, FusedFuture},
+    future::FusedFuture,
 };
 use git::GitHostingProviderRegistry;
 use git_ui::clone::clone_and_open;
@@ -59,15 +67,13 @@ use std::{
 use theme::{ActiveTheme, GlobalTheme, ThemeRegistry};
 use theme_settings::load_user_theme;
 use util::{
-    ResultExt, maybe,
+    ResultExt,
     paths::{PathStyle, SanitizedPath},
 };
 use uuid::Uuid;
 use workspace::{
     AppState, MultiWorkspace, PathList, SerializedWorkspaceLocation, SessionWorkspace, Toast,
-    WorkspaceSettings, WorkspaceStore,
-    notifications::{NotificationId, NotifyResultExt},
-    restore_multiworkspace,
+    WorkspaceSettings, WorkspaceStore, notifications::NotificationId, restore_multiworkspace,
 };
 use zed::{
     OpenListener, OpenRequest, RawOpenRequest, app_menus, build_window_options,
@@ -718,8 +724,10 @@ fn main() {
         );
         zed::watch_user_agents_md(app_state.fs.clone(), cx);
 
+        #[cfg(feature = "notebooks")]
         repl::init(app_state.fs.clone(), cx);
         recent_projects::init(cx);
+        #[cfg(feature = "dev-containers")]
         dev_container::init(cx);
 
         load_embedded_fonts(cx);
@@ -728,6 +736,7 @@ fn main() {
 
         editor::init(cx);
         image_viewer::init(cx);
+        #[cfg(feature = "notebooks")]
         repl::notebook::init(cx);
         diagnostics::init(cx);
 
@@ -746,6 +755,7 @@ fn main() {
         outline_panel::init(cx);
         tasks_ui::init(cx);
         snippets_ui::init(cx);
+        #[cfg(feature = "collaboration")]
         channel::init(&app_state.client, app_state.user_store.clone(), cx);
         search::init(cx);
         lsp_locations::init(cx);
@@ -769,6 +779,7 @@ fn main() {
         theme_selector::init(cx);
         settings_profile_selector::init(cx);
         language_tools::init(cx);
+        #[cfg(feature = "collaboration")]
         call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         git_ui::init(cx);
@@ -1779,6 +1790,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
         }));
     }
 
+    #[cfg(feature = "collaboration")]
     if !request.open_channel_notes.is_empty() || request.join_channel.is_some() {
         cx.spawn(async move |cx| {
             let result = maybe!(async {
@@ -1839,6 +1851,20 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
             }
         })
         .detach();
+    }
+    #[cfg(not(feature = "collaboration"))]
+    {
+        if !request.open_channel_notes.is_empty() || request.join_channel.is_some() {
+            log::warn!("Collaboration links are unavailable in this build");
+        }
+        if let Some(task) = task {
+            cx.spawn(async move |cx| {
+                if let Err(err) = task.await {
+                    fail_to_open_window_async(err, cx);
+                }
+            })
+            .detach();
+        }
     }
 }
 

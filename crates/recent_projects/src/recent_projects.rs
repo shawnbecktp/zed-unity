@@ -1,3 +1,4 @@
+#[cfg(feature = "dev-containers")]
 mod dev_container_suggest;
 pub mod disconnected_overlay;
 mod remote_connections;
@@ -38,6 +39,7 @@ pub use remote_servers::RemoteServerProjects;
 use settings::{DefaultOpenBehavior, Settings, WorktreeId};
 use workspace::{OpenPathPromptMode, ProjectGroupKey};
 
+#[cfg(feature = "dev-containers")]
 use dev_container::{DevContainerContext, find_devcontainer_configs};
 use ui::{
     ButtonLike, ContextMenu, Divider, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing,
@@ -52,7 +54,9 @@ use workspace::{
     SerializedWorkspaceLocation, Workspace, WorkspaceDb, WorkspaceId,
     notifications::DetachAndPromptErr, with_active_or_new_workspace,
 };
-use zed_actions::{OpenDevContainer, OpenRecent, OpenRemote};
+#[cfg(feature = "dev-containers")]
+use zed_actions::OpenDevContainer;
+use zed_actions::{OpenRecent, OpenRemote};
 
 actions!(
     recent_projects,
@@ -427,6 +431,7 @@ pub fn init(cx: &mut App) {
 
     cx.observe_new(DisconnectedOverlay::register).detach();
 
+    #[cfg(feature = "dev-containers")]
     cx.on_action(|_: &OpenDevContainer, cx| {
         with_active_or_new_workspace(cx, move |workspace, window, cx| {
             if !workspace.project().read(cx).is_local() {
@@ -463,7 +468,7 @@ pub fn init(cx: &mut App) {
         });
     });
 
-    // Subscribe to worktree additions to suggest opening the project in a dev container
+    #[cfg(feature = "dev-containers")]
     cx.observe_new(
         |workspace: &mut Workspace, window: Option<&mut Window>, cx: &mut Context<Workspace>| {
             let Some(window) = window else {
@@ -2750,6 +2755,7 @@ mod tests {
     }
 
     #[gpui::test]
+    #[cfg(feature = "dev-containers")]
     async fn test_open_dev_container_action_with_single_config(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
 
@@ -2815,6 +2821,7 @@ mod tests {
     }
 
     #[gpui::test]
+    #[cfg(feature = "dev-containers")]
     async fn test_open_dev_container_action_with_multiple_configs(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
 

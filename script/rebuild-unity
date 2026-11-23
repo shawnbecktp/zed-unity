@@ -60,18 +60,29 @@ test -s "$stage/$name/Contents/Resources/unity-event-references.tar.gz"
 
 swift - "$identifier" <<'SWIFT'
 import AppKit
+import Darwin
 let apps = NSRunningApplication.runningApplications(withBundleIdentifier: CommandLine.arguments[1])
-for app in apps { _ = app.terminate() }
+    .map { (application: $0, processIdentifier: $0.processIdentifier) }
+func isRunning(_ processIdentifier: pid_t) -> Bool {
+    guard processIdentifier > 0 else { return false }
+    return kill(processIdentifier, 0) == 0 || errno != ESRCH
+}
+for app in apps { _ = app.application.terminate() }
 let deadline = Date().addingTimeInterval(10)
-while apps.contains(where: { !$0.isTerminated }) {
+while apps.contains(where: { isRunning($0.processIdentifier) }) {
     if Date() >= deadline {
-        for app in apps where !app.isTerminated { _ = app.forceTerminate() }
+        for app in apps where isRunning(app.processIdentifier) {
+            if kill(app.processIdentifier, SIGKILL) != 0 && errno != ESRCH {
+                perror("Could not kill Zed Unity")
+                exit(1)
+            }
+        }
         break
     }
     RunLoop.current.run(until: Date().addingTimeInterval(0.2))
 }
 let killDeadline = Date().addingTimeInterval(10)
-while apps.contains(where: { !$0.isTerminated }) {
+while apps.contains(where: { isRunning($0.processIdentifier) }) {
     if Date() >= killDeadline {
         fputs("Could not terminate Zed Unity.\n", stderr)
         exit(1)

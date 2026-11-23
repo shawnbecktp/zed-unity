@@ -13,6 +13,7 @@ path = "src/recent_projects.rs"
 doctest = false
 
 [features]
+dev-containers = ["dep:dev_container"]
 default = []
 test-support = ["remote/test-support", "remote_connection/test-support", "project/test-support", "workspace/test-support"]
 
@@ -21,7 +22,7 @@ anyhow.workspace = true
 chrono.workspace = true
 askpass.workspace = true
 db.workspace = true
-dev_container.workspace = true
+dev_container = { workspace = true, optional = true }
 editor.workspace = true
 extension_host.workspace = true
 fs.workspace = true

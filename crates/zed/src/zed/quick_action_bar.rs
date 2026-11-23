@@ -1,4 +1,5 @@
 mod preview;
+#[cfg(feature = "notebooks")]
 mod repl_menu;
 
 use agent_settings::AgentSettings;
@@ -706,7 +707,11 @@ impl Render for QuickActionBar {
         h_flex()
             .id("quick action bar")
             .gap(DynamicSpacing::Base01.rems(cx))
-            .children(self.render_repl_menu(cx))
+            .when(cfg!(feature = "notebooks"), |this| {
+                #[cfg(feature = "notebooks")]
+                let this = this.children(self.render_repl_menu(cx));
+                this
+            })
             .children(self.render_preview_button(cx))
             .children(search_button)
             .when(

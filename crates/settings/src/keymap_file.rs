@@ -182,7 +182,9 @@ impl KeymapFile {
         source: Option<KeybindSource>,
         cx: &App,
     ) -> anyhow::Result<Vec<KeyBinding>> {
-        match Self::load(asset_str::<SettingsAssets>(asset_path).as_ref(), cx) {
+        let mut keymap = Self::parse(asset_str::<SettingsAssets>(asset_path).as_ref())?;
+        keymap.remove_unavailable_optional_actions(cx);
+        match keymap.load_keymap(cx) {
             KeymapFileLoadResult::Success { mut key_bindings } => match source {
                 Some(source) => Ok({
                     for key_binding in &mut key_bindings {
@@ -197,6 +199,34 @@ impl KeymapFile {
             }
             KeymapFileLoadResult::JsonParseFailure { error } => {
                 anyhow::bail!("JSON parse error in built-in keymap \"{asset_path}\": {error}")
+            }
+        }
+    }
+
+    fn remove_unavailable_optional_actions(&mut self, cx: &App) {
+        // Shared keymaps also serve builds that omit these optional subsystems.
+        for section in &mut self.0 {
+            if let Some(bindings) = &mut section.bindings {
+                bindings.retain(|_, action| {
+                    let Ok(Some((name, input))) = Self::parse_action_value(&action.0) else {
+                        return true;
+                    };
+                    let optional = [
+                        "repl::",
+                        "notebook::",
+                        "collab_panel::",
+                        "channel_modal::",
+                        "channel::",
+                        "collab::",
+                    ]
+                    .iter()
+                    .any(|namespace| name.starts_with(namespace));
+                    !optional
+                        || !matches!(
+                            cx.build_action(name, input.cloned()),
+                            Err(ActionBuildError::NotFound { .. })
+                        )
+                });
             }
         }
     }
@@ -1589,6 +1619,56 @@ mod tests {
     };
 
     gpui::actions!(test_keymap_file, [StringAction, InputAction]);
+
+    #[gpui::test]
+    fn optional_builtin_bindings_do_not_break_editor_bindings(cx: &mut App) {
+        let mut keymap = KeymapFile::parse(
+            r#"[{"bindings": {
+            "ctrl-a": "test_keymap_file::StringAction",
+            "ctrl-b": "repl::UnavailableInThisBuild",
+            "ctrl-c": "notebook::UnavailableInThisBuild",
+            "ctrl-d": "collab_panel::UnavailableInThisBuild",
+            "ctrl-e": "channel_modal::ToggleMode"
+        }}]"#,
+        )
+        .expect("valid keymap");
+        keymap.remove_unavailable_optional_actions(cx);
+        match keymap.load_keymap(cx) {
+            crate::KeymapFileLoadResult::Success { key_bindings } => {
+                assert_eq!(key_bindings.len(), 1);
+                assert!(key_bindings[0].action().partial_eq(&StringAction));
+            }
+            result => panic!("editor bindings failed to load: {result:?}"),
+        }
+    }
+
+    #[gpui::test]
+    fn optional_builtin_filter_preserves_unrelated_action_errors(cx: &mut App) {
+        let mut keymap = KeymapFile::parse(
+            r#"[{"bindings": {
+            "ctrl-a": "misspelled::UnavailableInThisBuild"
+        }}]"#,
+        )
+        .expect("valid keymap");
+        keymap.remove_unavailable_optional_actions(cx);
+        assert!(matches!(
+            keymap.load_keymap(cx),
+            crate::KeymapFileLoadResult::SomeFailedToLoad { .. }
+        ));
+    }
+
+    #[gpui::test]
+    fn user_keymaps_report_unavailable_optional_actions(cx: &mut App) {
+        assert!(matches!(
+            KeymapFile::load(
+                r#"[{"bindings": {
+            "ctrl-a": "repl::UnavailableInThisBuild"
+        }}]"#,
+                cx
+            ),
+            crate::KeymapFileLoadResult::SomeFailedToLoad { .. }
+        ));
+    }
 
     #[test]
     fn can_deserialize_keymap_with_trailing_comma() {

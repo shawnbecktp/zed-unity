@@ -1,4 +1,5 @@
 mod application_menu;
+#[cfg(feature = "collaboration")]
 pub mod collab;
 mod onboarding_banner;
 mod plan_chip;
@@ -25,14 +26,19 @@ use crate::application_menu::{
 };
 
 use auto_update::AutoUpdateStatus;
+#[cfg(feature = "collaboration")]
 use call::ActiveCall;
 use client::{Client, UserStore, zed_urls};
 use command_palette_hooks::CommandPaletteFilter;
+#[cfg(feature = "collaboration")]
+use gpui::TaskExt;
+#[cfg(feature = "collaboration")]
+use ui::PopoverMenuHandle;
 
 use gpui::{
     Action, Anchor, AnyElement, AnyView, App, Context, Element, Entity, Focusable,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Subscription, TaskExt, WeakEntity, Window, actions, div,
+    StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window, actions, div,
 };
 use onboarding_banner::OnboardingBanner;
 use project::{
@@ -48,7 +54,7 @@ use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
     Avatar, ButtonLike, ContextMenu, ContextMenuEntry, IconWithIndicator, Indicator, PopoverMenu,
-    PopoverMenuHandle, TintColor, Tooltip, prelude::*, utils::platform_title_bar_height,
+    TintColor, Tooltip, prelude::*, utils::platform_title_bar_height,
 };
 use update_version::UpdateVersion;
 use util::ResultExt;
@@ -224,6 +230,7 @@ pub struct TitleBar {
     _subscriptions: Vec<Subscription>,
     banner: Option<Entity<OnboardingBanner>>,
     update_version: Entity<UpdateVersion>,
+    #[cfg(feature = "collaboration")]
     screen_share_popover_handle: PopoverMenuHandle<ContextMenu>,
     _diagnostics_subscription: Option<gpui::Subscription>,
 }
@@ -427,6 +434,7 @@ impl TitleBar {
         let git_store = project.read(cx).git_store().clone();
         let user_store = workspace.app_state().user_store.clone();
         let client = workspace.app_state().client.clone();
+        #[cfg(feature = "collaboration")]
         let active_call = ActiveCall::global(cx);
 
         let platform_style = PlatformStyle::platform();
@@ -450,6 +458,7 @@ impl TitleBar {
             }),
         );
 
+        #[cfg(feature = "collaboration")]
         subscriptions.push(cx.observe(&active_call, |this, _, cx| this.active_call_changed(cx)));
         subscriptions.push(
             cx.subscribe(&git_store, move |_, _, event, cx| match event {
@@ -489,7 +498,7 @@ impl TitleBar {
 
         let banner = None;
 
-        let mut this = Self {
+        let this = Self {
             platform_titlebar,
             application_menu,
             workspace: workspace.weak_handle(),
@@ -500,10 +509,14 @@ impl TitleBar {
             _subscriptions: subscriptions,
             banner,
             update_version,
+            #[cfg(feature = "collaboration")]
             screen_share_popover_handle: PopoverMenuHandle::default(),
             _diagnostics_subscription: None,
         };
 
+        #[cfg(feature = "collaboration")]
+        let mut this = this;
+        #[cfg(feature = "collaboration")]
         this.observe_diagnostics(cx);
 
         this
@@ -1079,11 +1092,13 @@ impl TitleBar {
         )
     }
 
+    #[cfg(feature = "collaboration")]
     fn active_call_changed(&mut self, cx: &mut Context<Self>) {
         self.observe_diagnostics(cx);
         cx.notify();
     }
 
+    #[cfg(feature = "collaboration")]
     fn observe_diagnostics(&mut self, cx: &mut Context<Self>) {
         let diagnostics = ActiveCall::global(cx)
             .read(cx)
@@ -1097,6 +1112,7 @@ impl TitleBar {
         }
     }
 
+    #[cfg(feature = "collaboration")]
     fn share_project(&mut self, cx: &mut Context<Self>) {
         let active_call = ActiveCall::global(cx);
         let project = self.project.clone();
@@ -1105,6 +1121,7 @@ impl TitleBar {
             .detach_and_log_err(cx);
     }
 
+    #[cfg(feature = "collaboration")]
     fn unshare_project(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         let active_call = ActiveCall::global(cx);
         let project = self.project.clone();
@@ -1591,6 +1608,7 @@ mod tests {
         let project = Project::test(fs::FakeFs::new(cx.executor()), [], cx).await;
         cx.update(|cx| {
             let project = project.read(cx);
+            #[cfg(feature = "collaboration")]
             call::init(project.client(), project.user_store(), cx);
             init(cx);
         });

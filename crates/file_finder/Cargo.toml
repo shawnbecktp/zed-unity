@@ -12,9 +12,12 @@ workspace = true
 path = "src/file_finder.rs"
 doctest = false
 
+[features]
+collaboration = ["dep:channel"]
+
 [dependencies]
 anyhow.workspace = true
-channel.workspace = true
+channel = { workspace = true, optional = true }
 client.workspace = true
 collections.workspace = true
 editor.workspace = true

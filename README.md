@@ -5,6 +5,8 @@
 
 This fork includes UnityEvent reference navigation and keeps the Agent panel for external ACP agents, including Codex and Claude Code. Zed account sign-in and Zed’s native agent are disabled. Build the macOS app with `script/bundle-mac` using Zed's macOS build prerequisites, the .NET 8 SDK, and the Rust `wasm32-wasip2` target. Open **Zed Unity** and select **Install Unity support** during onboarding. You can return to setup through **zed: open onboarding**. The C# extension downloads from Zed's public registry. UnityEvent References and its runtime come from the app bundle.
 
+The default build excludes collaboration, voice/video calls, screen sharing, notebooks/REPL, and dev containers. Core editing, C# and Unity support, Git, terminal, debugger, SSH editing, and external ACP agents remain available. The optional Cargo features on the `zed` package are `collaboration`, `notebooks`, and `dev-containers`. `script/rebuild-unity` builds the default configuration and replaces the installed macOS app.
+
 Press **Shift** twice to open **Search Everywhere**. Start typing to find files, symbols, editor actions, and text in your project. Use **Tab** or **Shift+Tab** to switch categories, **Enter** to open a result, and **Esc** to return. Alternate keymaps are available under **Base Keymap** in Settings.
 
 Middle-click a symbol to open a quick usages modal with file paths, line numbers, and highlighted code snippets. Filter the list, press Enter to open a usage, or choose **Open in tab** to show all references in the full dedicated tab view.

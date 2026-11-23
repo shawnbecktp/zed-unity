@@ -189,6 +189,10 @@ actions!(
 );
 
 pub fn init(cx: &mut App) {
+    #[cfg(not(feature = "dev-containers"))]
+    command_palette_hooks::CommandPaletteFilter::update_global(cx, |filter, _| {
+        filter.hide_action_types(&[std::any::TypeId::of::<zed_actions::OpenDevContainer>()]);
+    });
     #[cfg(target_os = "macos")]
     mac_app_icon::init(cx);
     #[cfg(target_os = "macos")]
@@ -6514,13 +6518,16 @@ mod tests {
             AppState::set_global(app_state.clone(), cx);
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             audio::init(cx);
+            #[cfg(feature = "collaboration")]
             channel::init(&app_state.client, app_state.user_store.clone(), cx);
+            #[cfg(feature = "collaboration")]
             call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             workspace::init(app_state.clone(), cx);
             release_channel::init(Version::new(0, 0, 0), cx);
             command_palette::init(cx);
             editor::init(cx);
+            #[cfg(feature = "collaboration")]
             collab_ui::init(&app_state, cx);
             git_ui::init(cx);
             project_panel::init(cx);
@@ -6558,7 +6565,9 @@ mod tests {
                 cx,
             );
 
+            #[cfg(feature = "notebooks")]
             repl::init(app_state.fs.clone(), cx);
+            #[cfg(feature = "notebooks")]
             repl::notebook::init(cx);
             tasks_ui::init(cx);
             project::debugger::breakpoint_store::BreakpointStore::init(
