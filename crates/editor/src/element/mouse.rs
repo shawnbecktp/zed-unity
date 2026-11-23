@@ -19,7 +19,7 @@ use util::{RangeExt, debug_panic};
 use super::{EditorElement, EditorLayout, LineNumberLayout, PositionMap, SplitSide};
 use crate::{
     CURSORS_VISIBLE_FOR, ColumnarMode, DisplayDiffHunk, DisplayPoint, DisplayRow, Editor,
-    EditorSettings, EditorSnapshot, GutterHoverButton, HoveredCursor, JumpData,
+    EditorSettings, EditorSnapshot, FindAllReferences, GutterHoverButton, HoveredCursor, JumpData,
     PhantomDiffReviewIndicator, SelectPhase, Selection, SelectionDragState,
     display_map::ToDisplayPoint, editor_settings::DoubleClickInMultibuffer,
     hover_popover::hover_at, inlays::inlay_hints::HintTarget, mouse_context_menu,
@@ -848,6 +848,23 @@ impl EditorElement {
         let point_for_position = position_map.point_for_position(event.position);
         let position = point_for_position.nearest_valid;
 
+        if editor.lsp_data_enabled() && !event.modifiers.modified() {
+            *editor
+                .pending_mouse_down
+                .get_or_insert_with(Default::default)
+                .borrow_mut() = Some(event.clone());
+            editor.select(
+                SelectPhase::Begin {
+                    position,
+                    add: false,
+                    click_count: 1,
+                },
+                window,
+                cx,
+            );
+            return;
+        }
+
         editor.select(
             SelectPhase::BeginColumnar {
                 position,
@@ -934,6 +951,7 @@ impl EditorElement {
             cx.stop_propagation();
         } else if cfg!(any(target_os = "linux", target_os = "freebsd"))
             && event.button == MouseButton::Middle
+            && !(editor.lsp_data_enabled() && !event.modifiers.modified())
         {
             if !text_hitbox.is_hovered(window) || editor.read_only(cx) {
                 return;
@@ -987,6 +1005,29 @@ impl EditorElement {
             )
         {
             let point = position_map.point_for_position(mouse_position);
+            if let ClickEvent::Mouse(mouse_event) = event
+                && mouse_event.down.button == MouseButton::Middle
+                && mouse_event.up.button == MouseButton::Middle
+                && !mouse_event.down.modifiers.modified()
+                && !mouse_event.up.modifiers.modified()
+                && editor.lsp_data_enabled()
+            {
+                editor.select(SelectPhase::End, window, cx);
+                let focus_handle = editor.focus_handle.clone();
+                window.defer(cx, move |window, cx| {
+                    focus_handle.dispatch_action(
+                        &FindAllReferences {
+                            always_open_multibuffer: false,
+                            ..Default::default()
+                        },
+                        window,
+                        cx,
+                    );
+                });
+                cx.stop_propagation();
+                return;
+            }
+
             if let ClickEvent::Mouse(mouse_event) = event
                 && mouse_event.up.click_count == 1
                 && !mouse_event.down.modifiers.modified()

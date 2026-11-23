@@ -35268,6 +35268,51 @@ async fn test_goto_definition_with_find_all_references_fallback(cx: &mut TestApp
 }
 
 #[gpui::test]
+async fn test_middle_click_finds_references_at_clicked_symbol(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("ˇfoo(); bar(); foo();");
+
+    let actions = Rc::new(RefCell::new(Vec::new()));
+    let subscription = cx.update_editor(|editor, _, cx| {
+        let editor_handle = cx.entity();
+        let actions = actions.clone();
+        editor.register_action(move |action: &FindAllReferences, _, cx| {
+            editor_handle.update(cx, |editor, cx| {
+                assert!(!editor.has_pending_selection());
+                let snapshot = editor.display_snapshot(cx);
+                actions.borrow_mut().push((
+                    action.clone(),
+                    editor.selections.newest::<Point>(&snapshot).head(),
+                ));
+            });
+        })
+    });
+
+    let click_position = cx.pixel_position("foo(); bˇar(); foo();");
+    cx.simulate_mouse_down(click_position, MouseButton::Middle, Modifiers::none());
+    assert!(actions.borrow().is_empty());
+    cx.simulate_mouse_up(click_position, MouseButton::Middle, Modifiers::none());
+    cx.run_until_parked();
+
+    {
+        let actions = actions.borrow();
+        assert_eq!(actions.len(), 1);
+        let (action, position) = &actions[0];
+        assert!(!action.always_open_multibuffer);
+        assert!(action.open_results_in.is_none());
+        assert_eq!(*position, Point::new(0, 8));
+    }
+    cx.assert_editor_state("foo(); bˇar(); foo();");
+
+    let click_position = cx.pixel_position("fˇoo(); bar(); foo();");
+    cx.simulate_click(click_position, Modifiers::none());
+    cx.run_until_parked();
+    assert_eq!(actions.borrow().len(), 1);
+    drop(subscription);
+}
+
+#[gpui::test]
 async fn test_find_all_references_cleanup_after_edit(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let (requests, mut responses) = mpsc::unbounded();
