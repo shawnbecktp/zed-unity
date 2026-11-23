@@ -7,7 +7,7 @@ This fork includes UnityEvent reference navigation and keeps the Agent panel for
 
 Press **Shift** twice to open **Search Everywhere**. Start typing to find files, symbols, editor actions, and text in your project. Use **Tab** or **Shift+Tab** to switch categories, **Enter** to open a result, and **Esc** to return. Alternate keymaps are available under **Base Keymap** in Settings.
 
-Middle-click a symbol to find its references. A single result opens directly; multiple results use your configured LSP results view.
+Middle-click a symbol to open a quick usages modal with file paths, line numbers, and highlighted code snippets. Filter the list, press Enter to open a usage, or choose **Open in tab** to show all references in the full dedicated tab view.
 
 Use the selector above the project tree to switch views. **Unity** shows `Assets`, `Packages`, and `ProjectSettings` without `.meta` files. **Solution** filters the tree to .NET source, solution, project, and assembly definition files, excluding generated caches. **Files** shows the regular file tree. Click the crosshair button, **Select Opened File**, to expand and highlight the active file. It switches to Files when the selected view excludes that file. The same command is available in the command palette as **project panel: select opened file**.
 

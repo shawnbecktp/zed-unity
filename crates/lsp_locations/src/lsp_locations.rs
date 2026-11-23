@@ -5,6 +5,7 @@ use std::sync::Arc;
 use collections::HashMap;
 use editor::actions::{
     FindAllReferences, GoToDeclaration, GoToDefinition, GoToImplementation, GoToTypeDefinition,
+    ShowUsages,
 };
 use editor::hover_links::{HoverLink, OpenDefinitionLocations};
 use editor::{Editor, EditorSettings, GotoDefinitionKind, OpenResultsIn};
@@ -60,6 +61,19 @@ fn register(editor: &mut Editor, _window: Option<&mut Window>, cx: &mut Context<
         })
         .detach();
     let handle = cx.entity().downgrade();
+    editor
+        .register_action({
+            let handle = handle.clone();
+            move |_: &ShowUsages, window, cx| {
+                LspLocationsPicker::open_for_editor(
+                    LspPickerKind::Usages,
+                    handle.clone(),
+                    window,
+                    cx,
+                );
+            }
+        })
+        .detach();
     editor
         .register_action({
             let handle = handle.clone();
@@ -270,6 +284,7 @@ fn show_no_results_toast(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LspPickerKind {
+    Usages,
     References,
     Definition,
     Declaration,
@@ -280,6 +295,7 @@ pub enum LspPickerKind {
 impl LspPickerKind {
     fn placeholder(self) -> &'static str {
         match self {
+            LspPickerKind::Usages => "Filter usages…",
             LspPickerKind::References => "Filter references…",
             LspPickerKind::Definition => "Filter definitions…",
             LspPickerKind::Declaration => "Filter declarations…",
@@ -292,6 +308,7 @@ impl LspPickerKind {
     /// appear to silently do nothing.
     fn empty_message(self) -> &'static str {
         match self {
+            LspPickerKind::Usages => "No usages found",
             LspPickerKind::References => "No references found",
             LspPickerKind::Definition => "No definitions found",
             LspPickerKind::Declaration => "No declarations found",
@@ -309,7 +326,9 @@ impl LspPickerKind {
         cx: &mut Context<Editor>,
     ) -> Option<Task<anyhow::Result<Vec<Location>>>> {
         match self {
-            LspPickerKind::References => editor.find_all_references_locations(project, cx),
+            LspPickerKind::Usages | LspPickerKind::References => {
+                editor.find_all_references_locations(project, cx)
+            }
             LspPickerKind::Definition => {
                 editor.definition_locations_of_kind(GotoDefinitionKind::Symbol, cx)
             }
@@ -397,7 +416,7 @@ impl LspLocationsPicker {
                 return;
             }
 
-            if matches.len() == 1 {
+            if matches.len() == 1 && kind != LspPickerKind::Usages {
                 if let Some(location_match) = matches.into_iter().next() {
                     let location = Location {
                         buffer: location_match.buffer,
@@ -434,7 +453,13 @@ impl LspLocationsPicker {
     ) -> Self {
         let preview = picker_preview::editor_preview(project.clone(), window, cx);
         let delegate = LspLocationsDelegate::new(kind, matches, project, editor, origin);
-        let picker = cx.new(|cx| Picker::list_with_preview(delegate, preview, window, cx));
+        let picker = cx.new(|cx| {
+            if kind == LspPickerKind::Usages {
+                Picker::list(delegate, window, cx).initial_width(rems(64.))
+            } else {
+                Picker::list_with_preview(delegate, preview, window, cx)
+            }
+        });
         let subscription = cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| {
             cx.emit(DismissEvent);
         });
@@ -470,6 +495,7 @@ struct LocationMatch {
     syntax_highlights: Vec<(Range<usize>, HighlightId)>,
     match_range: Range<usize>,
     line_number: u32,
+    column_number: u32,
 }
 
 /// A row in the grouped display list: a non-selectable file header, a match, or
@@ -543,7 +569,7 @@ impl LspLocationsDelegate {
         let mut max_line_number = 0;
         for &match_index in &self.matches {
             let location_match = &self.all_matches[match_index];
-            if last_path != Some(&location_match.path) {
+            if self.kind != LspPickerKind::Usages && last_path != Some(&location_match.path) {
                 if last_path.is_some() {
                     entries.push(Entry::Separator);
                 }
@@ -569,6 +595,22 @@ impl LspLocationsDelegate {
             Entry::Match(match_index) => self.all_matches.get(*match_index),
             Entry::Header(_) | Entry::Separator => None,
         }
+    }
+
+    fn open_in_tab(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let editor = self.editor.clone();
+        cx.emit(DismissEvent);
+        window.defer(cx, move |window, cx| {
+            editor
+                .update(cx, |editor, cx| {
+                    if let Some(task) =
+                        editor.find_all_references(&FindAllReferences::default(), window, cx)
+                    {
+                        task.detach_and_log_err(cx);
+                    }
+                })
+                .log_err();
+        });
     }
 
     fn open_selected(&mut self, split: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
@@ -671,6 +713,7 @@ fn build_location_matches(locations: &[Location], cx: &App) -> Vec<LocationMatch
             syntax_highlights,
             match_range,
             line_number: row + 1,
+            column_number: snapshot.offset_to_point(start_offset).column + 1,
         });
     }
 
@@ -690,6 +733,61 @@ impl PickerDelegate for LspLocationsDelegate {
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> std::sync::Arc<str> {
         self.kind.placeholder().into()
+    }
+
+    fn render_header(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
+        if self.kind != LspPickerKind::Usages {
+            return None;
+        }
+        let symbol = self
+            .all_matches
+            .first()
+            .and_then(|location| location.display_text.get(location.match_range.clone()))
+            .filter(|symbol| !symbol.is_empty());
+        let title = symbol.map_or_else(
+            || "Usages".to_string(),
+            |symbol| format!("Usages of '{symbol}'"),
+        );
+        Some(
+            h_flex()
+                .w_full()
+                .justify_between()
+                .px_3()
+                .py_2()
+                .child(Label::new(title))
+                .child(Label::new(format!("{} usages", self.all_matches.len())).color(Color::Muted))
+                .into_any_element(),
+        )
+    }
+
+    fn render_footer(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
+        if self.kind != LspPickerKind::Usages {
+            return None;
+        }
+        Some(
+            h_flex()
+                .w_full()
+                .justify_between()
+                .px_3()
+                .py_2()
+                .child(
+                    Label::new("Enter to open usage · Esc to close")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+                .child(Button::new("open-usages-in-tab", "Open in tab").on_click(
+                    cx.listener(|picker, _, window, cx| picker.delegate.open_in_tab(window, cx)),
+                ))
+                .into_any_element(),
+        )
     }
 
     fn match_count(&self) -> usize {
@@ -849,17 +947,40 @@ impl PickerDelegate for LspLocationsDelegate {
                                 .min_w_0()
                                 .gap_2p5()
                                 .text_sm()
+                                .when(self.kind == LspPickerKind::Usages, |row| {
+                                    row.child(
+                                        div().w(rems(20.)).min_w_0().truncate().child(
+                                            Label::new(
+                                                location_match.path.path.as_unix_str().to_string(),
+                                            )
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                        ),
+                                    )
+                                })
                                 .child(
                                     h_flex()
-                                        .w(rems(
-                                            (self.max_line_number.max(1).ilog10() + 1) as f32 * 0.5,
-                                        ))
+                                        .w(rems(if self.kind == LspPickerKind::Usages {
+                                            5.0
+                                        } else {
+                                            (self.max_line_number.max(1).ilog10() + 1) as f32 * 0.5
+                                        }))
                                         .justify_end()
                                         .child(
-                                            Label::new(location_match.line_number.to_string())
-                                                .color(Color::Custom(
+                                            Label::new(if self.kind == LspPickerKind::Usages {
+                                                format!(
+                                                    "{}:{}",
+                                                    location_match.line_number,
+                                                    location_match.column_number
+                                                )
+                                            } else {
+                                                location_match.line_number.to_string()
+                                            })
+                                            .color(
+                                                Color::Custom(
                                                     cx.theme().colors().text_muted.opacity(0.5),
-                                                )),
+                                                ),
+                                            ),
                                         ),
                                 )
                                 .child(
@@ -989,6 +1110,65 @@ mod tests {
             active_picker(&mut cx).is_some(),
             "multiple references should open the picker"
         );
+    }
+
+    #[gpui::test]
+    async fn test_middle_click_usages_and_open_in_tab(cx: &mut TestAppContext) {
+        cx.update(crate::init);
+        let mut cx = rust_cx(
+            lsp::ServerCapabilities {
+                references_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+        cx.update_global::<settings::SettingsStore, _>(|settings, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.editor.lsp_results_location = Some(OpenResultsIn::Picker);
+            });
+        });
+        cx.set_state(SOURCE);
+        cx.lsp
+            .set_request_handler::<lsp::request::References, _, _>(async move |params, _| {
+                Ok(Some(references(
+                    params.text_document_position.text_document.uri,
+                    &[(2, 14, 17)],
+                )))
+            });
+        let position = cx
+            .editor(|editor, _, cx| editor.pixel_position_of_cursor(cx))
+            .unwrap();
+        cx.simulate_mouse_down(position, gpui::MouseButton::Middle, gpui::Modifiers::none());
+        cx.simulate_mouse_up(position, gpui::MouseButton::Middle, gpui::Modifiers::none());
+        cx.run_until_parked();
+        let modal = active_picker(&mut cx).expect("even one usage should open the quick modal");
+        cx.assert_editor_state(SOURCE);
+        let picker = cx.update(|_, cx| modal.read(cx).picker.clone());
+        cx.update(|window, cx| {
+            picker.update(cx, |picker, cx| {
+                assert_eq!(picker.delegate.kind, LspPickerKind::Usages);
+                assert_eq!(picker.delegate.entries.len(), 1);
+                assert_eq!(picker.delegate.all_matches[0].column_number, 15);
+                picker.set_query("no matching usage", window, cx);
+            })
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            picker.update(cx, |picker, cx| {
+                assert!(picker.delegate.matches.is_empty());
+                picker.delegate.open_in_tab(window, cx);
+            })
+        });
+        cx.run_until_parked();
+        assert!(active_picker(&mut cx).is_none());
+        cx.update_workspace(|workspace, _, cx| {
+            assert_eq!(workspace.items_of_type::<Editor>(cx).count(), 2);
+            let editor = workspace
+                .active_item_as::<Editor>(cx)
+                .expect("references tab");
+            assert!(!editor.read(cx).buffer().read(cx).is_singleton());
+        });
     }
 
     #[gpui::test]

@@ -35277,7 +35277,7 @@ async fn test_middle_click_finds_references_at_clicked_symbol(cx: &mut TestAppCo
     let subscription = cx.update_editor(|editor, _, cx| {
         let editor_handle = cx.entity();
         let actions = actions.clone();
-        editor.register_action(move |action: &FindAllReferences, _, cx| {
+        editor.register_action(move |action: &ShowUsages, _, cx| {
             editor_handle.update(cx, |editor, cx| {
                 assert!(!editor.has_pending_selection());
                 let snapshot = editor.display_snapshot(cx);
@@ -35298,9 +35298,7 @@ async fn test_middle_click_finds_references_at_clicked_symbol(cx: &mut TestAppCo
     {
         let actions = actions.borrow();
         assert_eq!(actions.len(), 1);
-        let (action, position) = &actions[0];
-        assert!(!action.always_open_multibuffer);
-        assert!(action.open_results_in.is_none());
+        let (_, position) = &actions[0];
         assert_eq!(*position, Point::new(0, 8));
     }
     cx.assert_editor_state("foo(); bˇar(); foo();");

@@ -601,6 +601,8 @@ actions!(
         FormatSelections,
         /// Goes to declaration in a split pane.
         GoToDeclarationSplit,
+        /// Shows a compact list of usages for the symbol at the cursor.
+        ShowUsages,
         /// Goes to definition in a split pane.
         GoToDefinitionSplit,
         /// Goes to the next diff hunk.

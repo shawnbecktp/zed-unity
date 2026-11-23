@@ -19,8 +19,8 @@ use util::{RangeExt, debug_panic};
 use super::{EditorElement, EditorLayout, LineNumberLayout, PositionMap, SplitSide};
 use crate::{
     CURSORS_VISIBLE_FOR, ColumnarMode, DisplayDiffHunk, DisplayPoint, DisplayRow, Editor,
-    EditorSettings, EditorSnapshot, FindAllReferences, GutterHoverButton, HoveredCursor, JumpData,
-    PhantomDiffReviewIndicator, SelectPhase, Selection, SelectionDragState,
+    EditorSettings, EditorSnapshot, GutterHoverButton, HoveredCursor, JumpData,
+    PhantomDiffReviewIndicator, SelectPhase, Selection, SelectionDragState, ShowUsages,
     display_map::ToDisplayPoint, editor_settings::DoubleClickInMultibuffer,
     hover_popover::hover_at, inlays::inlay_hints::HintTarget, mouse_context_menu,
     scroll::ScrollPixelOffset,
@@ -1015,14 +1015,7 @@ impl EditorElement {
                 editor.select(SelectPhase::End, window, cx);
                 let focus_handle = editor.focus_handle.clone();
                 window.defer(cx, move |window, cx| {
-                    focus_handle.dispatch_action(
-                        &FindAllReferences {
-                            always_open_multibuffer: false,
-                            ..Default::default()
-                        },
-                        window,
-                        cx,
-                    );
+                    focus_handle.dispatch_action(&ShowUsages, window, cx);
                 });
                 cx.stop_propagation();
                 return;
