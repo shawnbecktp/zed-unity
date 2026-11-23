@@ -60,6 +60,30 @@ MonoBehaviour:
 
 
 class UnityEventReferences(unittest.TestCase):
+    def test_gameobject_owners_for_class_and_method(self):
+        client = Client()
+        self.addCleanup(client.close)
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = Path(tmp).resolve() / "Assets"
+            assets.mkdir()
+            script = assets / "Handler.cs"
+            script.write_text("class Handler { public void Submit() {} }")
+            Path(str(script) + ".meta").write_text("guid: " + GUID)
+            data = asset(GUID).replace("  m_OnClick:", "  m_GameObject: {fileID: 10}\n  m_OnClick:")
+            data = data.replace("  m_Script:", "  m_GameObject: {fileID: 20}\n  m_Script:")
+            data += "--- !u!1 &10\nGameObject:\n  m_Name: Play Button\n--- !u!1 &20\nGameObject:\n  m_Name: Controller\n"
+            for filename in ["Main.unity", "Menu.prefab"]:
+                (assets / filename).write_text(data)
+            client.references(script, "Submit")
+            for identifier, owner in [("Handler", "Controller"), ("Submit", "Play Button")]:
+                params = {"textDocument": {"uri": script.as_uri()},
+                          "position": {"line": 0, "character": script.read_text().index(identifier)}}
+                hits = client.send("textDocument/references", params, 4)
+                self.assertEqual(len(hits), 2)
+                hover = client.send("textDocument/hover", params, 5)["contents"]["value"]
+                for filename in ["Main.unity", "Menu.prefab"]:
+                    self.assertIn(f"{owner} — {filename}:", hover)
+
     def test_target_identity_and_refresh(self):
         client = Client()
         self.addCleanup(client.close)

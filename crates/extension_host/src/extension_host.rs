@@ -753,6 +753,12 @@ impl ExtensionStore {
             return;
         }
 
+        if matches!(self.extension_status("unity-event-references"), ExtensionStatus::Installed(version) if version.as_ref() == "0.1.0")
+            && !self.is_dev_extension("unity-event-references")
+        {
+            self.install_unity_extension(cx).detach_and_log_err(cx);
+        }
+
         let extension_settings = ExtensionSettings::get_global(cx);
 
         let extensions_to_install = extension_settings

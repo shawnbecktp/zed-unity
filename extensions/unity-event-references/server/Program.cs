@@ -11,7 +11,7 @@ var output = Console.OpenStandardOutput();
 var documents = new Dictionary<string, string>();
 var index = new EventIndex();
 
-IEnumerable<object> References(JsonNode args)
+IEnumerable<AssetUse> References(JsonNode args)
 {
     var uri = (string)args["textDocument"]!["uri"]!;
     if (!Uri.TryCreate(uri, UriKind.Absolute, out var file) || !file.IsFile ||
@@ -25,11 +25,21 @@ IEnumerable<object> References(JsonNode args)
     int line = (int)args["position"]!["line"]!, col = (int)args["position"]!["character"]!;
     if (line < 0 || line >= source.Lines.Count || col < 0 || col >= source.Lines[line].Span.Length) return [];
     var token = CSharpSyntaxTree.ParseText(source).GetRoot().FindToken(source.Lines[line].Start + col);
-    if (token.Parent is not MethodDeclarationSyntax method || token != method.Identifier ||
-        method.Parent is not ClassDeclarationSyntax type || type.Identifier.ValueText != Path.GetFileNameWithoutExtension(path) ||
-        type.Members.OfType<MethodDeclarationSyntax>().Count(m => m.Identifier.ValueText == token.ValueText) != 1) return [];
+    string? methodName = null;
+    ClassDeclarationSyntax type;
+    if (token.Parent is ClassDeclarationSyntax declaration && token == declaration.Identifier)
+        type = declaration;
+    else if (token.Parent is MethodDeclarationSyntax method && token == method.Identifier &&
+             method.Parent is ClassDeclarationSyntax owner &&
+             owner.Members.OfType<MethodDeclarationSyntax>().Count(m => m.Identifier.ValueText == token.ValueText) == 1)
+    {
+        type = owner;
+        methodName = token.ValueText;
+    }
+    else return [];
+    if (type.Parent is TypeDeclarationSyntax || type.Identifier.ValueText != Path.GetFileNameWithoutExtension(path)) return [];
     var guid = Regex.Match(File.ReadAllText(path + ".meta"), @"(?m)^guid: ([a-fA-F0-9]{32})\s*$");
-    return guid.Success ? index.Find(Path.Combine(root.FullName, "Assets"), guid.Groups[1].Value, token.ValueText) : [];
+    return guid.Success ? index.Find(Path.Combine(root.FullName, "Assets"), guid.Groups[1].Value, methodName) : [];
 }
 
 while (ReadMessage(input) is JsonObject request)
@@ -43,7 +53,7 @@ while (ReadMessage(input) is JsonObject request)
         switch (method)
         {
             case "initialize":
-                result = new { capabilities = new { textDocumentSync = 1, referencesProvider = true } };
+                result = new { capabilities = new { textDocumentSync = 1, referencesProvider = true, hoverProvider = true } };
                 break;
             case "textDocument/didOpen":
                 var doc = argsNode!["textDocument"]!;
@@ -55,7 +65,15 @@ while (ReadMessage(input) is JsonObject request)
             case "textDocument/didClose":
                 documents.Remove((string)argsNode!["textDocument"]!["uri"]!);
                 break;
-            case "textDocument/references": result = References(argsNode!); break;
+            case "textDocument/references": result = References(argsNode!).Select(hit => hit.Location).ToArray(); break;
+            case "textDocument/hover":
+                var sourceFile = new Uri((string)argsNode!["textDocument"]!["uri"]!).LocalPath;
+                var objects = References(argsNode).Select(hit =>
+                    $"{hit.Use.Owner} — {Path.GetRelativePath(Path.GetDirectoryName(sourceFile)!, hit.Path)}:{hit.Use.Line + 1}")
+                    .OrderBy(label => label, StringComparer.Ordinal).ToArray();
+                if (objects.Length > 0)
+                    result = new { contents = new { kind = "plaintext", value = "Unity GameObjects\n" + string.Join("\n", objects) } };
+                break;
             case "shutdown": break;
             case "exit": return;
             default: error = new { code = -32601, message = "Unsupported method" }; break;

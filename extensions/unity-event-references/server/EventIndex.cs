@@ -1,22 +1,36 @@
 using System.Text.RegularExpressions;
 
-record Listener(string ScriptGuid, string Method, int Line, int Column);
+record UnityUse(string ScriptGuid, string? Method, string Owner, int Line, int Column, int Length);
+record AssetUse(string Path, UnityUse Use)
+{
+    public object Location => new {
+        uri = new Uri(Path).AbsoluteUri,
+        range = new {
+            start = new { line = Use.Line, character = Use.Column },
+            end = new { line = Use.Line, character = Use.Column + Use.Length }
+        }
+    };
+}
 
 class EventIndex
 {
-    private readonly Dictionary<string, (long Size, DateTime Modified, List<Listener> Calls)> cache = new();
+    private readonly Dictionary<string, (long Size, DateTime Modified, List<UnityUse> Calls)> cache = new();
     private static readonly Regex Header = new(@"^--- !u!(\d+) &(-?\d+)", RegexOptions.Compiled);
     private static readonly Regex Script = new(@"^  m_Script: \{fileID: 11500000, guid: ([0-9a-fA-F]{32}),", RegexOptions.Compiled);
+    private static readonly Regex GameObject = new(@"^  m_GameObject: \{fileID: (-?\d+)\}$", RegexOptions.Compiled);
     private static readonly Regex Target = new(@"^- m_Target: \{fileID: (-?\d+)\}$", RegexOptions.Compiled);
 
     // Read Unity's text serialization. Local fileIDs are scoped to one asset.
-    private static List<Listener> Read(string path)
+    private static List<UnityUse> Read(string path)
     {
         var components = new Dictionary<string, string>();
-        var calls = new List<(string Target, string Name, int Line, int Column)>();
+        var owners = new Dictionary<string, string>();
+        var names = new Dictionary<string, string>();
+        var scripts = new List<(string Component, string Guid, int Line, int Column)>();
+        var calls = new List<(string Component, string Target, string Name, int Line, int Column)>();
         using var reader = File.OpenText(path);
         if (reader.ReadLine()?.StartsWith("%YAML ") != true) return [];
-        string? component = null, target = null;
+        string? component = null, gameObject = null, target = null;
         int persistentIndent = -1, callsIndent = -1, line = 0;
         while (reader.ReadLine() is string raw)
         {
@@ -27,14 +41,23 @@ class EventIndex
             if (raw.StartsWith("---"))
             {
                 var doc = Header.Match(raw);
+                gameObject = doc.Groups[1].Value == "1" ? doc.Groups[2].Value : null;
                 component = doc.Groups[1].Value == "114" ? doc.Groups[2].Value : null;
                 persistentIndent = callsIndent = -1;
                 target = null;
                 continue;
             }
+            if (gameObject != null && raw.StartsWith("  m_Name: "))
+                names[gameObject] = raw["  m_Name: ".Length..].Trim();
             if (component == null) continue;
+            if (GameObject.Match(raw) is { Success: true } owner)
+                owners[component] = owner.Groups[1].Value;
             if (raw.StartsWith("  m_Script:") && Script.Match(raw) is { Success: true } script)
-                components[component] = script.Groups[1].Value;
+            {
+                var guid = script.Groups[1];
+                components[component] = guid.Value;
+                scripts.Add((component, guid.Value, line, guid.Index));
+            }
             if (indent <= persistentIndent)
                 persistentIndent = callsIndent = -1;
             if (text == "m_PersistentCalls:")
@@ -61,16 +84,21 @@ class EventIndex
             else if (callsIndent >= 0 && indent == callsIndent + 2 && target != null && text.StartsWith("m_MethodName: "))
             {
                 var name = text["m_MethodName: ".Length..].TrimEnd();
-                calls.Add((target, name, line, indent + "m_MethodName: ".Length));
+                calls.Add((component, target, name, line, indent + "m_MethodName: ".Length));
             }
         }
-        return calls.Where(c => components.ContainsKey(c.Target))
-            .Select(c => new Listener(components[c.Target], c.Name, c.Line, c.Column)).ToList();
+        string Owner(string componentId) =>
+            owners.TryGetValue(componentId, out var id)
+                ? names.GetValueOrDefault(id, $"GameObject {id}") : $"Component {componentId}";
+        return scripts.Select(s => new UnityUse(s.Guid, null, Owner(s.Component), s.Line, s.Column, s.Guid.Length))
+            .Concat(calls.Where(c => components.ContainsKey(c.Target))
+                .Select(c => new UnityUse(components[c.Target], c.Name, Owner(c.Component), c.Line, c.Column, c.Name.Length)))
+            .ToList();
     }
 
-    public IEnumerable<object> Find(string assets, string guid, string method)
+    public IEnumerable<AssetUse> Find(string assets, string guid, string? method)
     {
-        var results = new List<object>();
+        var results = new List<AssetUse>();
         var seen = new HashSet<string>();
         var options = new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint };
         foreach (var file in new DirectoryInfo(assets).EnumerateFiles("*", options))
@@ -82,8 +110,8 @@ class EventIndex
             {
                 if (!cache.TryGetValue(path, out var entry) || entry.Size != file.Length || entry.Modified != file.LastWriteTimeUtc)
                     cache[path] = entry = (file.Length, file.LastWriteTimeUtc, Read(path));
-                foreach (var call in entry.Calls.Where(c => c.ScriptGuid == guid && c.Method == method).ToList())
-                    results.Add(Location(path, call));
+                foreach (var call in entry.Calls.Where(c => StringComparer.OrdinalIgnoreCase.Equals(c.ScriptGuid, guid) && c.Method == method))
+                    results.Add(new AssetUse(path, call));
             }
             catch (IOException) { cache.Remove(path); }
             catch (UnauthorizedAccessException) { cache.Remove(path); }
@@ -92,11 +120,4 @@ class EventIndex
         return results;
     }
 
-    private static object Location(string path, Listener c) => new {
-        uri = new Uri(path).AbsoluteUri,
-        range = new {
-            start = new { line = c.Line, character = c.Column },
-            end = new { line = c.Line, character = c.Column + c.Method.Length }
-        }
-    };
 }

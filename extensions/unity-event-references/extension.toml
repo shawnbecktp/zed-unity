@@ -1,7 +1,7 @@
 id = "unity-event-references"
 name = "UnityEvent References"
 description = "Find serialized UnityEvent listeners in scenes and prefabs from C#."
-version = "0.1.0"
+version = "0.2.0"
 schema_version = 1
 authors = ["UnityEvent References contributors"]
 
