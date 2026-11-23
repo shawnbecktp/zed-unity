@@ -15,6 +15,8 @@ esac
 [[ $# -le 1 && $(uname -s) == Darwin ]] || { usage >&2; exit 2; }
 # Use the repository toolchain for packaging helpers as well as the editor.
 export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
+export TERM="${TERM:-xterm-256color}"
+if [[ $TERM == dumb ]]; then export TERM=xterm-256color; fi
 command -v rustup >/dev/null || { echo "Install rustup to build Zed Unity." >&2; exit 1; }
 export RUSTUP_TOOLCHAIN
 RUSTUP_TOOLCHAIN=$(awk -F '"' '/^channel = / { print $2 }' rust-toolchain.toml)
@@ -60,10 +62,18 @@ swift - "$identifier" <<'SWIFT'
 import AppKit
 let apps = NSRunningApplication.runningApplications(withBundleIdentifier: CommandLine.arguments[1])
 for app in apps { _ = app.terminate() }
-let deadline = Date().addingTimeInterval(60)
+let deadline = Date().addingTimeInterval(10)
 while apps.contains(where: { !$0.isTerminated }) {
     if Date() >= deadline {
-        fputs("Quit Zed Unity or finish its save prompt and retry.\n", stderr)
+        for app in apps where !app.isTerminated { _ = app.forceTerminate() }
+        break
+    }
+    RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+}
+let killDeadline = Date().addingTimeInterval(10)
+while apps.contains(where: { !$0.isTerminated }) {
+    if Date() >= killDeadline {
+        fputs("Could not terminate Zed Unity.\n", stderr)
         exit(1)
     }
     RunLoop.current.run(until: Date().addingTimeInterval(0.2))
