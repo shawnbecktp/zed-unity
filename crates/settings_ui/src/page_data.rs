@@ -65,7 +65,7 @@ macro_rules! concat_sections {
 pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
     vec![
         general_page(cx),
-        appearance_page(),
+        appearance_page(cx),
         keymap_page(),
         editor_page(),
         languages_and_tools_page(cx),
@@ -553,7 +553,7 @@ fn general_page(cx: &App) -> SettingsPage {
     }
 }
 
-fn appearance_page() -> SettingsPage {
+fn appearance_page(cx: &App) -> SettingsPage {
     fn theme_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("Theme"),
@@ -1669,8 +1669,7 @@ fn appearance_page() -> SettingsPage {
         ]
     }
 
-    let items: Box<[SettingsPageItem]> = concat_sections!(
-        theme_section(),
+    let remaining_sections = concat_sections!(
         buffer_font_section(),
         ui_font_section(),
         agent_panel_font_section(),
@@ -1684,7 +1683,14 @@ fn appearance_page() -> SettingsPage {
 
     SettingsPage {
         title: "Appearance",
-        items,
+        items: theme_section()
+            .into_iter()
+            .chain(
+                cx.try_global::<crate::DockIconPicker>()
+                    .map(|_| SettingsPageItem::DockIcon),
+            )
+            .chain(remaining_sections)
+            .collect(),
     }
 }
 

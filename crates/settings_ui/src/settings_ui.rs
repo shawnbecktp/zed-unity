@@ -1081,6 +1081,18 @@ struct NavBarEntry {
     focus_handle: FocusHandle,
 }
 
+/// Integrates the host application's Dock icon preference with Appearance settings.
+pub struct DockIconPicker {
+    /// Labels in selection order.
+    pub labels: &'static [&'static str],
+    /// Returns the selected option's index.
+    pub selected: fn() -> usize,
+    /// Applies and saves the selected option.
+    pub select: fn(usize, &mut App),
+}
+
+impl gpui::Global for DockIconPicker {}
+
 struct SettingsPage {
     title: &'static str,
     items: Box<[SettingsPageItem]>,
@@ -1093,6 +1105,7 @@ enum SettingsPageItem {
     SubPageLink(SubPageLink),
     DynamicItem(DynamicItem),
     ActionLink(ActionLink),
+    DockIcon,
 }
 
 impl std::fmt::Debug for SettingsPageItem {
@@ -1111,6 +1124,7 @@ impl std::fmt::Debug for SettingsPageItem {
             SettingsPageItem::ActionLink(action_link) => {
                 write!(f, "ActionLink({})", action_link.title)
             }
+            SettingsPageItem::DockIcon => f.write_str("DockIcon"),
         }
     }
 }
@@ -1204,6 +1218,38 @@ impl SettingsPageItem {
         match self {
             SettingsPageItem::SectionHeader(header) => {
                 SettingsSectionHeader::new(SharedString::new_static(header)).into_any_element()
+            }
+            SettingsPageItem::DockIcon => {
+                let picker = cx.global::<DockIconPicker>();
+                let select = picker.select;
+                let description = "Choose the icon shown in the macOS Dock.";
+                let control = EnumVariantDropdown::new_indexed(
+                    "dock-icon",
+                    (picker.selected)(),
+                    picker.labels,
+                    move |index, _, cx| select(index, cx),
+                )
+                .title_case(false)
+                .aria_label("Dock Icon")
+                .aria_description(description)
+                .tab_index(0)
+                .into_any_element();
+                let row = render_settings_item_layout(
+                    settings_window,
+                    "Dock Icon",
+                    description,
+                    control,
+                    None,
+                    None,
+                    None,
+                    false,
+                    cx,
+                );
+                v_flex()
+                    .px_8()
+                    .child(apply_padding(row))
+                    .when(bottom_border, |this| this.child(Divider::horizontal()))
+                    .into_any_element()
             }
             SettingsPageItem::SettingItem(setting_item) => {
                 let (field_with_padding, _) =
@@ -2254,6 +2300,13 @@ impl SettingsWindow {
                             any_found_since_last_header = true;
                         }
                     }
+                    SettingsPageItem::DockIcon => {
+                        if USER.contains(current_file) {
+                            any_found_since_last_header = true;
+                        } else {
+                            page_filter[index] = false;
+                        }
+                    }
                 }
             }
             if let Some(last_header) = page_filter.get_mut(header_index)
@@ -2502,6 +2555,13 @@ impl SettingsWindow {
                             key_index,
                             action_link.title.as_ref(),
                         );
+                    }
+                    SettingsPageItem::DockIcon => {
+                        documents.push(SearchDocument {
+                            id: key_index,
+                            words: split_into_words(&[page.title, header_str, "Dock Icon"]),
+                        });
+                        push_candidates(&mut fuzzy_match_candidates, key_index, "Dock Icon");
                     }
                 }
                 push_candidates(&mut fuzzy_match_candidates, key_index, page.title);

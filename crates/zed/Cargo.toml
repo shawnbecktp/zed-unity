@@ -239,6 +239,9 @@ ztracing.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 nix = { workspace = true, features = ["user"] }
+objc2.workspace = true
+objc2-app-kit.workspace = true
+objc2-foundation = { workspace = true, features = ["NSUserDefaults"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 etw_tracing.workspace = true

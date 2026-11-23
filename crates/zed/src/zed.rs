@@ -1,6 +1,8 @@
 mod app_menus;
 pub mod edit_prediction_registry;
 #[cfg(target_os = "macos")]
+mod mac_app_icon;
+#[cfg(target_os = "macos")]
 pub(crate) mod mac_only_instance;
 mod migrate;
 #[cfg(target_os = "macos")]
@@ -187,6 +189,8 @@ actions!(
 );
 
 pub fn init(cx: &mut App) {
+    #[cfg(target_os = "macos")]
+    mac_app_icon::init(cx);
     #[cfg(target_os = "macos")]
     cx.on_action(|_: &Hide, cx| cx.hide());
     #[cfg(target_os = "macos")]
@@ -1520,6 +1524,9 @@ fn initialize_pane(
 fn open_about_window(cx: &mut App) {
     fn about_window_icon(release_channel: ReleaseChannel) -> Arc<Image> {
         let bytes = match release_channel {
+            #[cfg(target_os = "macos")]
+            ReleaseChannel::Dev => mac_app_icon::DockIcon::selected().bytes(),
+            #[cfg(not(target_os = "macos"))]
             ReleaseChannel::Dev => include_bytes!("../resources/app-icon-dev.png").as_slice(),
             ReleaseChannel::Nightly => {
                 include_bytes!("../resources/app-icon-nightly.png").as_slice()

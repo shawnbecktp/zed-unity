@@ -56,7 +56,16 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
         MenuItem::separator(),
     ]);
 
-    if ReleaseChannel::try_global(cx) == Some(ReleaseChannel::Dev) {
+    let release_channel = ReleaseChannel::try_global(cx);
+    let app_name = release_channel
+        .unwrap_or(*release_channel::RELEASE_CHANNEL)
+        .display_name();
+    #[cfg(target_os = "macos")]
+    let dock_icon_item =
+        (release_channel == Some(ReleaseChannel::Dev)).then(super::mac_app_icon::menu_item);
+    #[cfg(not(target_os = "macos"))]
+    let dock_icon_item = None;
+    if release_channel == Some(ReleaseChannel::Dev) {
         view_items.push(MenuItem::action(
             "Toggle GPUI Inspector",
             dev::ToggleInspector,
@@ -66,32 +75,47 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
 
     vec![
         Menu {
-            name: "Zed".into(),
+            name: app_name.into(),
             disabled: false,
             items: vec![
-                MenuItem::action("About Zed", zed_actions::About),
+                MenuItem::action(format!("About {app_name}"), zed_actions::About),
                 MenuItem::action("Check for Updates", auto_update::Check),
                 MenuItem::separator(),
-                MenuItem::submenu(Menu::new("Settings").items([
-                    MenuItem::action("Open Settings", zed_actions::OpenSettings),
-                    MenuItem::action("Open Settings File", super::OpenSettingsFile),
-                    MenuItem::action("Open Project Settings", zed_actions::OpenProjectSettings),
-                    MenuItem::action("Open Project Settings File", super::OpenProjectSettingsFile),
-                    MenuItem::action("Open Default Settings", super::OpenDefaultSettings),
-                    MenuItem::separator(),
-                    MenuItem::action("Open Keymap", zed_actions::OpenKeymap),
-                    MenuItem::action("Open Keymap File", zed_actions::OpenKeymapFile),
-                    MenuItem::action("Open Default Key Bindings", zed_actions::OpenDefaultKeymap),
-                    MenuItem::separator(),
-                    MenuItem::action(
-                        "Select Theme...",
-                        zed_actions::theme_selector::Toggle::default(),
+                MenuItem::submenu(
+                    Menu::new("Settings").items(
+                        [
+                            MenuItem::action("Open Settings", zed_actions::OpenSettings),
+                            MenuItem::action("Open Settings File", super::OpenSettingsFile),
+                            MenuItem::action(
+                                "Open Project Settings",
+                                zed_actions::OpenProjectSettings,
+                            ),
+                            MenuItem::action(
+                                "Open Project Settings File",
+                                super::OpenProjectSettingsFile,
+                            ),
+                            MenuItem::action("Open Default Settings", super::OpenDefaultSettings),
+                            MenuItem::separator(),
+                            MenuItem::action("Open Keymap", zed_actions::OpenKeymap),
+                            MenuItem::action("Open Keymap File", zed_actions::OpenKeymapFile),
+                            MenuItem::action(
+                                "Open Default Key Bindings",
+                                zed_actions::OpenDefaultKeymap,
+                            ),
+                            MenuItem::separator(),
+                            MenuItem::action(
+                                "Select Theme...",
+                                zed_actions::theme_selector::Toggle::default(),
+                            ),
+                            MenuItem::action(
+                                "Select Icon Theme...",
+                                zed_actions::icon_theme_selector::Toggle::default(),
+                            ),
+                        ]
+                        .into_iter()
+                        .chain(dock_icon_item),
                     ),
-                    MenuItem::action(
-                        "Select Icon Theme...",
-                        zed_actions::icon_theme_selector::Toggle::default(),
-                    ),
-                ])),
+                ),
                 MenuItem::separator(),
                 #[cfg(target_os = "macos")]
                 MenuItem::os_submenu("Services", gpui::SystemMenuType::Services),
@@ -101,13 +125,13 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                 MenuItem::action("Install CLI", install_cli::InstallCliBinary),
                 MenuItem::separator(),
                 #[cfg(target_os = "macos")]
-                MenuItem::action("Hide Zed", super::Hide),
+                MenuItem::action(format!("Hide {app_name}"), super::Hide),
                 #[cfg(target_os = "macos")]
                 MenuItem::action("Hide Others", super::HideOthers),
                 #[cfg(target_os = "macos")]
                 MenuItem::action("Show All", super::ShowAll),
                 MenuItem::separator(),
-                MenuItem::action("Quit Zed", Quit),
+                MenuItem::action(format!("Quit {app_name}"), Quit),
             ],
         },
         Menu {
