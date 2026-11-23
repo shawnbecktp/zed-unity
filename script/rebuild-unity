@@ -13,6 +13,15 @@ case "${1:-}" in
     *) usage >&2; exit 2 ;;
 esac
 [[ $# -le 1 && $(uname -s) == Darwin ]] || { usage >&2; exit 2; }
+# Use the repository toolchain for packaging helpers as well as the editor.
+export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
+command -v rustup >/dev/null || { echo "Install rustup to build Zed Unity." >&2; exit 1; }
+export RUSTUP_TOOLCHAIN
+RUSTUP_TOOLCHAIN=$(awk -F '"' '/^channel = / { print $2 }' rust-toolchain.toml)
+rustup show active-toolchain
+toolchain_bin=$(dirname "$(rustup which rustc)")
+export PATH="$toolchain_bin:$PATH"
+export RUSTC="$toolchain_bin/rustc"
 if [[ ${1:-} == --windows ]]; then
     repo=shawnbecktp/zed-unity
     revision=$(git rev-parse HEAD)
@@ -21,7 +30,7 @@ if [[ ${1:-} == --windows ]]; then
 fi
 
 triple=$(rustc -vV | awk '/^host:/ {print $2}')
-export CARGO_TARGET_DIR="$PWD/target"
+unset CARGO_TARGET_DIR
 script/bundle-mac -d "$triple"
 name='Zed Unity.app'
 identifier=com.shawnbecktp.zed-unity
