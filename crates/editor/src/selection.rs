@@ -1662,6 +1662,7 @@ impl Editor {
 
             self.refresh_code_actions_for_selection(window, cx);
             self.refresh_document_highlights(cx);
+            self.refresh_inline_usages(false, window, cx);
             refresh_linked_ranges(self, window, cx);
 
             self.refresh_selected_text_highlights(&display_map, false, window, cx);

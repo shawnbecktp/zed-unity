@@ -1366,6 +1366,136 @@ impl Editor {
         Some(cx.spawn(async move |_, _| Ok(references.await?.unwrap_or_default())))
     }
 
+    fn inline_usage_symbol(&self, cx: &App) -> Option<(Entity<Buffer>, text::Anchor)> {
+        let multi_buffer = self.buffer.read(cx);
+        let buffer = multi_buffer.as_singleton()?;
+        if buffer.read(cx).language()?.name().as_ref() != "CSharp" {
+            return None;
+        }
+        let (_, cursor) =
+            multi_buffer.text_anchor_for_position(self.selections.newest_anchor().head(), cx)?;
+        let snapshot = buffer.read(cx).snapshot();
+        let row = cursor.to_point(&snapshot).row;
+        let indent = Point::new(row, snapshot.indent_size_for_line(row).len);
+        for offset in [
+            cursor.to_offset(&snapshot),
+            text::ToOffset::to_offset(&indent, &snapshot),
+        ] {
+            let mut node = snapshot.syntax_ancestor(offset..offset);
+            while let Some(current) = node {
+                if matches!(
+                    current.kind(),
+                    "class_declaration"
+                        | "method_declaration"
+                        | "constructor_declaration"
+                        | "record_declaration"
+                        | "struct_declaration"
+                        | "interface_declaration"
+                ) && let Some(name) = current.child_by_field_name("name")
+                    && name.start_position().row == row as usize
+                {
+                    return Some((buffer, snapshot.anchor_after(name.start_byte())));
+                }
+                node = current.parent();
+            }
+        }
+        None
+    }
+
+    pub(super) fn refresh_inline_usages(
+        &mut self,
+        force: bool,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        let symbol = (self.lsp_data_enabled() && self.is_focused(window) && self.project.is_some())
+            .then(|| self.inline_usage_symbol(cx))
+            .flatten();
+        let anchor = symbol.as_ref().map(|(_, name)| *name);
+        if !force && self.inline_usages_symbol == anchor {
+            return;
+        }
+        self.inline_usages_symbol = anchor;
+        self.inline_usages_task.take();
+        if self.inline_usages.take().is_some() {
+            cx.notify();
+        }
+        let Some((buffer, name)) = symbol else { return };
+        let Some(project) = self.project.clone() else {
+            return;
+        };
+        self.inline_usages_task = Some(cx.spawn(async move |editor, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(450))
+                .await;
+            let task = project.update(cx, |project, cx| project.references(&buffer, name, cx));
+            let Ok(Some(locations)) = task.await else {
+                return;
+            };
+            editor
+                .update(cx, |editor, cx| {
+                    let declaration = name.to_offset(buffer.read(cx));
+                    let mut seen = HashSet::default();
+                    let usages = locations
+                        .into_iter()
+                        .filter(|location| {
+                            let target = location.buffer.read(cx);
+                            let range = location.range.to_offset(target);
+                            !(location.buffer == buffer && range.contains(&declaration))
+                                && seen.insert((target.remote_id(), range))
+                        })
+                        .collect::<Vec<_>>();
+                    let has_unity_objects = usages.iter().any(|location| {
+                        matches!(
+                            location
+                                .buffer
+                                .read(cx)
+                                .file()
+                                .and_then(|file| file.path().extension()),
+                            Some("unity" | "prefab")
+                        )
+                    });
+                    editor.inline_usages = Some(InlineUsages {
+                        locations: usages,
+                        has_unity_objects,
+                    });
+                    cx.notify();
+                })
+                .ok();
+        }));
+    }
+
+    pub(super) fn open_inline_usages(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((workspace, usages)) = self.workspace().zip(self.inline_usages.as_ref()) else {
+            return;
+        };
+        if usages.locations.is_empty() {
+            return;
+        }
+        let locations = usages
+            .locations
+            .iter()
+            .map(|location| {
+                (
+                    location.buffer.clone(),
+                    location.range.to_point(location.buffer.read(cx)),
+                )
+            })
+            .into_group_map();
+        workspace.update(cx, |workspace, cx| {
+            Self::open_locations_in_multibuffer(
+                workspace,
+                locations,
+                "Usages".into(),
+                false,
+                PreviewTabsSettings::get_global(cx).enable_preview_multibuffer_from_code_navigation,
+                MultibufferSelectionMode::First,
+                window,
+                cx,
+            );
+        });
+    }
+
     pub fn find_all_references(
         &mut self,
         action: &FindAllReferences,

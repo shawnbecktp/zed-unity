@@ -337,6 +337,11 @@ impl ReportEditorEvent {
     }
 }
 
+struct InlineUsages {
+    locations: Vec<Location>,
+    has_unity_objects: bool,
+}
+
 pub enum ActiveDebugLine {}
 pub enum DebugStackFrameLine {}
 
@@ -1060,6 +1065,9 @@ pub struct Editor {
     context_menu_options: Option<ContextMenuOptions>,
     mouse_context_menu: Option<MouseContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<()>)>,
+    inline_usages_symbol: Option<text::Anchor>,
+    inline_usages: Option<InlineUsages>,
+    inline_usages_task: Option<Task<()>>,
     inline_blame_popover: Option<InlineBlamePopover>,
     inline_blame_popover_show_task: Option<Task<()>>,
     signature_help_state: SignatureHelpState,
@@ -2137,6 +2145,7 @@ impl Editor {
                         editor.refresh_semantic_tokens(None, true, cx);
                     }
                     project::Event::LanguageServerRemoved(_) => {
+                        editor.refresh_inline_usages(true, window, cx);
                         editor.registered_buffers.clear();
                         editor.register_visible_buffers(cx);
                         editor.invalidate_semantic_tokens(None);
@@ -2170,6 +2179,7 @@ impl Editor {
                     project::Event::LanguageServerBufferRegistered { buffer_id, .. } => {
                         let buffer_id = *buffer_id;
                         if editor.buffer().read(cx).buffer(buffer_id).is_some() {
+                            editor.refresh_inline_usages(true, window, cx);
                             editor.register_buffer(buffer_id, cx);
                             editor.refresh_runnables(Some(buffer_id), window, cx);
                             editor.invalidate_semantic_tokens(Some(buffer_id));
@@ -2447,6 +2457,9 @@ impl Editor {
             context_menu_options: None,
             mouse_context_menu: None,
             completion_tasks: Vec::new(),
+            inline_usages_symbol: None,
+            inline_usages: None,
+            inline_usages_task: None,
             inline_blame_popover: None,
             inline_blame_popover_show_task: None,
             signature_help_state: SignatureHelpState::default(),
@@ -10221,6 +10234,7 @@ impl Editor {
                 });
             }
             multi_buffer::Event::Reparsed(buffer_id) => {
+                self.refresh_inline_usages(true, window, cx);
                 self.refresh_runnables(Some(*buffer_id), window, cx);
                 self.refresh_selected_text_highlights(&self.display_snapshot(cx), true, window, cx);
                 self.colorize_brackets(true, cx);
@@ -10232,6 +10246,7 @@ impl Editor {
                 self.refresh_runnables(None, window, cx);
             }
             multi_buffer::Event::LanguageChanged(buffer_id, is_fresh_language) => {
+                self.refresh_inline_usages(true, window, cx);
                 if !is_fresh_language {
                     self.registered_buffers.remove(&buffer_id);
                 }
@@ -10980,6 +10995,7 @@ impl Editor {
 
     fn handle_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.cursor_animations.clear();
+        self.refresh_inline_usages(true, window, cx);
         cx.emit(EditorEvent::Focused);
 
         if let Some(descendant) = self

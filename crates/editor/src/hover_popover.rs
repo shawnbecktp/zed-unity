@@ -233,7 +233,7 @@ pub fn hide_hover(editor: &mut Editor, cx: &mut Context<Editor>) -> bool {
 /// Queries the LSP and shows type info and documentation
 /// about the symbol the mouse is currently hovering over.
 /// Triggered by the `Hover` action when the cursor may be over a symbol.
-fn show_hover(
+pub(super) fn show_hover(
     editor: &mut Editor,
     anchor: Anchor,
     ignore_timeout: bool,

@@ -7747,9 +7747,12 @@ impl LspStore {
                 cx,
             );
             cx.background_spawn(async move {
+                let responses = references_task.await;
+                if responses.is_empty() {
+                    return Ok(None);
+                }
                 Ok(Some(
-                    references_task
-                        .await
+                    responses
                         .into_iter()
                         .flat_map(|(_, references)| references)
                         .dedup()

@@ -152,10 +152,8 @@ struct SelectionLayout {
 }
 
 struct InlineBlameLayout {
-    element: AnyElement,
-    bounds: Bounds<Pixels>,
-    buffer_id: BufferId,
-    entry: BlameEntry,
+    elements: SmallVec<[AnyElement; 2]>,
+    blame: Option<(Bounds<Pixels>, BufferId, BlameEntry)>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2130,6 +2128,59 @@ impl EditorElement {
         Some(button)
     }
 
+    fn inline_usage_element(&self, count: usize, has_objects: bool) -> AnyElement {
+        let editor = self.editor.downgrade();
+        let usage_editor = editor.clone();
+        h_flex()
+            .gap_2()
+            .child(
+                div()
+                    .id("inline-usages")
+                    .child(inline_usage_label(count))
+                    .when(count > 0, |element| {
+                        element
+                            .cursor_pointer()
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_click(move |_, window, cx| {
+                                cx.stop_propagation();
+                                usage_editor
+                                    .update(cx, |editor, cx| editor.open_inline_usages(window, cx))
+                                    .ok();
+                            })
+                    }),
+            )
+            .when(has_objects, |row| {
+                row.child(
+                    div()
+                        .id("inline-unity-objects")
+                        .child(
+                            Label::new("Unity objects")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .cursor_pointer()
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_click(move |_, window, cx| {
+                            cx.stop_propagation();
+                            editor
+                                .update(cx, |editor, cx| {
+                                    if let Some(name) = editor.inline_usages_symbol
+                                        && let Some(anchor) = editor
+                                            .buffer
+                                            .read(cx)
+                                            .snapshot(cx)
+                                            .anchor_in_excerpt(name)
+                                    {
+                                        hover_popover::show_hover(editor, anchor, true, window, cx);
+                                    }
+                                })
+                                .ok();
+                        }),
+                )
+            })
+            .into_any_element()
+    }
+
     fn layout_inline_blame(
         &self,
         display_row: DisplayRow,
@@ -2144,15 +2195,19 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<InlineBlameLayout> {
-        if !self
-            .editor
-            .update(cx, |editor, cx| editor.render_git_blame_inline(window, cx))
-        {
+        let editor = self.editor.read(cx);
+        let usages = editor
+            .inline_usages
+            .as_ref()
+            .map(|usages| (usages.locations.len(), usages.has_unity_objects))
+            .filter(|_| editor.is_focused(window));
+        let blame = editor
+            .render_git_blame_inline(window, cx)
+            .then(|| editor.blame.clone())
+            .flatten();
+        if usages.is_none() && blame.is_none() {
             return None;
         }
-
-        let editor = self.editor.read(cx);
-        let blame = editor.blame.clone()?;
         let padding = {
             const INLINE_ACCEPT_SUGGESTION_EM_WIDTHS: f32 = 14.;
 
@@ -2170,13 +2225,24 @@ impl EditorElement {
             padding * em_width
         };
 
-        let (buffer_id, entry) = blame
-            .update(cx, |blame, cx| {
-                blame.blame_for_rows(&[*row_info], cx).next()
+        let blame = blame
+            .and_then(|blame| {
+                blame
+                    .update(cx, |blame, cx| {
+                        blame.blame_for_rows(&[*row_info], cx).next()
+                    })
+                    .flatten()
             })
-            .flatten()?;
-
-        let mut element = render_inline_blame_entry(entry.clone(), &self.style, cx)?;
+            .and_then(|(id, entry)| {
+                let mut element = render_inline_blame_entry(entry.clone(), &self.style, cx)?;
+                let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
+                Some((element, size, id, entry))
+            });
+        if blame.is_none() && usages.is_none() {
+            return None;
+        }
+        let usage_element =
+            usages.map(|(count, objects)| self.inline_usage_element(count, objects));
 
         let start_y =
             content_origin.y + line_height * ((display_row.as_f64() - scroll_position.y) as f32);
@@ -2207,17 +2273,24 @@ impl EditorElement {
         };
 
         let absolute_offset = point(start_x, start_y);
-        let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
-        let bounds = Bounds::new(absolute_offset, size);
-
-        element.prepaint_as_root(absolute_offset, AvailableSpace::min_size(), window, cx);
-
-        Some(InlineBlameLayout {
-            element,
-            bounds,
-            buffer_id,
-            entry,
-        })
+        let mut elements = SmallVec::new();
+        let mut usage_x = start_x;
+        let blame = blame.map(|(mut element, size, id, entry)| {
+            element.prepaint_as_root(absolute_offset, AvailableSpace::min_size(), window, cx);
+            elements.push(element);
+            usage_x += size.width + window.rem_size() * 0.5;
+            (Bounds::new(absolute_offset, size), id, entry)
+        });
+        if let Some(mut element) = usage_element {
+            element.prepaint_as_root(
+                point(usage_x, start_y),
+                AvailableSpace::min_size(),
+                window,
+                cx,
+            );
+            elements.push(element);
+        }
+        Some(InlineBlameLayout { elements, blame })
     }
 
     fn layout_blame_popover(
@@ -6673,7 +6746,9 @@ impl EditorElement {
 
     fn paint_inline_blame(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
         if let Some(mut blame_layout) = layout.inline_blame_layout.take() {
-            blame_layout.element.paint(window, cx);
+            for element in &mut blame_layout.elements {
+                element.paint(window, cx);
+            }
         }
     }
 
@@ -7313,6 +7388,15 @@ fn apply_dirty_filename_style(
             .with_default_highlights(text_style, highlight)
             .into_any(),
     )
+}
+
+fn inline_usage_label(count: usize) -> Label {
+    let label = if count == 1 {
+        "1 usage".to_owned()
+    } else {
+        format!("{count} usages")
+    };
+    Label::new(label).size(LabelSize::Small).color(Color::Muted)
 }
 
 fn render_inline_blame_entry(
@@ -9183,40 +9267,41 @@ impl Element for EditorElement {
                         );
                     }
 
-                    let longest_line_blame_width = self
-                        .editor
-                        .update(cx, |editor, cx| {
-                            if !editor.show_git_blame_inline {
-                                return None;
-                            }
-                            // Blame is only painted inline for the Inline location, so
-                            // reserving scroll room for it in other locations would let
-                            // the editor scroll into blank space.
-                            if ProjectSettings::get_global(cx).git.inline_blame.location
-                                != InlineBlameLocation::Inline
-                            {
-                                return None;
-                            }
-                            let blame = editor.blame.as_ref()?;
-                            let (_, blame_entry) = blame
-                                .update(cx, |blame, cx| {
-                                    let row_infos =
-                                        snapshot.row_infos(snapshot.longest_row()).next()?;
-                                    blame.blame_for_rows(&[row_infos], cx).next()
-                                })
-                                .flatten()?;
-                            let mut element = render_inline_blame_entry(blame_entry, style, cx)?;
-                            let inline_blame_padding =
-                                ProjectSettings::get_global(cx).git.inline_blame.padding as f32
-                                    * em_advance;
-                            Some(
-                                element
-                                    .layout_as_root(AvailableSpace::min_size(), window, cx)
-                                    .width
-                                    + inline_blame_padding,
-                            )
-                        })
-                        .unwrap_or(Pixels::ZERO);
+                    let blame_width = |display_row, window: &mut Window, cx: &mut App| {
+                        self.editor
+                            .update(cx, |editor, cx| {
+                                if !editor.show_git_blame_inline {
+                                    return None;
+                                }
+                                // Blame is only painted inline for the Inline location, so
+                                // reserving scroll room for it in other locations would let
+                                // the editor scroll into blank space.
+                                if ProjectSettings::get_global(cx).git.inline_blame.location
+                                    != InlineBlameLocation::Inline
+                                {
+                                    return None;
+                                }
+                                let blame = editor.blame.as_ref()?;
+                                let (_, blame_entry) = blame
+                                    .update(cx, |blame, cx| {
+                                        let row_infos = snapshot.row_infos(display_row).next()?;
+                                        blame.blame_for_rows(&[row_infos], cx).next()
+                                    })
+                                    .flatten()?;
+                                let mut element =
+                                    render_inline_blame_entry(blame_entry, style, cx)?;
+                                let inline_blame_padding =
+                                    ProjectSettings::get_global(cx).git.inline_blame.padding as f32
+                                        * em_advance;
+                                Some(
+                                    element
+                                        .layout_as_root(AvailableSpace::min_size(), window, cx)
+                                        .width
+                                        + inline_blame_padding,
+                                )
+                            })
+                            .unwrap_or(Pixels::ZERO)
+                    };
 
                     let longest_line_width = layout_line(
                         snapshot.longest_row(),
@@ -9229,14 +9314,39 @@ impl Element for EditorElement {
                     )
                     .width;
 
+                    let longest_line_blame_width = blame_width(snapshot.longest_row(), window, cx);
+                    let mut document_width = longest_line_width + longest_line_blame_width;
+                    if let Some(head) = newest_selection_head
+                        && (start_row..end_row).contains(&head.row())
+                        && let Some(usages) = self.editor.read(cx).inline_usages.as_ref()
+                        && self.editor.read(cx).is_focused(window)
+                        && let Some(line) = line_layouts.get(head.row().minus(start_row) as usize)
+                    {
+                        let label_width = self
+                            .inline_usage_element(usages.locations.len(), usages.has_unity_objects)
+                            .layout_as_root(AvailableSpace::min_size(), window, cx)
+                            .width;
+                        let settings = &ProjectSettings::get_global(cx).git.inline_blame;
+                        let min_column = settings.min_column as usize;
+                        let padding = em_advance * settings.padding as f32;
+                        let blame_width_with_padding = blame_width(head.row(), window, cx);
+                        let label_start =
+                            (line.width + padding).max(column_pixels(style, min_column, window));
+                        let gap_and_blame = if blame_width_with_padding > Pixels::ZERO {
+                            blame_width_with_padding - padding + window.rem_size() * 0.5
+                        } else {
+                            Pixels::ZERO
+                        };
+                        document_width =
+                            document_width.max(label_start + gap_and_blame + label_width);
+                    }
                     let scrollbar_layout_information = ScrollbarLayoutInformation::new(
                         text_hitbox.bounds,
                         glyph_grid_cell,
                         size(
-                            longest_line_width,
+                            document_width,
                             Pixels::from(max_row.as_f64() * f64::from(line_height)),
                         ),
-                        longest_line_blame_width,
                         EditorSettings::get_global(cx),
                         scroll_beyond_last_line,
                     );
@@ -10008,7 +10118,7 @@ impl Element for EditorElement {
                         text_hitbox: text_hitbox.clone(),
                         inline_blame_bounds: inline_blame_layout
                             .as_ref()
-                            .map(|layout| (layout.bounds, layout.buffer_id, layout.entry.clone())),
+                            .and_then(|layout| layout.blame.clone()),
                         display_hunks: display_hunks.clone(),
                         diff_hunk_control_bounds,
                     });
@@ -10215,7 +10325,6 @@ impl ScrollbarLayoutInformation {
         editor_bounds: Bounds<Pixels>,
         glyph_grid_cell: Size<Pixels>,
         document_size: Size<Pixels>,
-        longest_line_blame_width: Pixels,
         settings: &EditorSettings,
         scroll_beyond_last_line: ScrollBeyondLastLine,
     ) -> Self {
@@ -10227,7 +10336,7 @@ impl ScrollbarLayoutInformation {
             }
         };
 
-        let overscroll = size(longest_line_blame_width, vertical_overscroll);
+        let overscroll = size(Pixels::ZERO, vertical_overscroll);
 
         ScrollbarLayoutInformation {
             editor_bounds,
